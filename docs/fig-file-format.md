@@ -199,3 +199,53 @@ strategy that survives this:
   context; fractional-index-sorted children with counts do.
 - TypeScript/Node is the natural stack (canonical Kiwi implementation, zstd in stdlib); either
   vendor `tools/fig2json.mjs`'s decoder or depend on `kiwi-schema` (both proven equivalent here).
+
+## 7. Addendum — measured while building the MCP server (2026-08-31)
+
+Four addressing details that the sections above do not cover. All were verified on
+`figma-input/sample.fig` and are exercised by the golden tests in `test/golden/`.
+
+### 7.1 Shared styles are ordinary nodes carrying a publishable `key`
+
+A style definition is **not** a separate record type. It is a normal, hidden node parked on a
+canvas whose `key` field holds the 40-hex asset key that `styleIdFor*.assetRef.key` points at:
+
+- a **text style** is a `TEXT` node holding the typography (e.g. `2:1322` "Meiryo/Regular/16"),
+- a **fill / colour style** is a `ROUNDED_RECTANGLE` node holding the paint
+  (e.g. `2:7073` "Label Color/Light/Secondary").
+
+Keyed nodes in the sample: 414 total — `VARIABLE` 272, `ROUNDED_RECTANGLE` 103, `TEXT` 51,
+`VARIABLE_SET` 26, `BRUSH` 25. So a style used from the *same* file resolves to a real node and
+therefore to real values; only styles published from another library stay opaque.
+
+### 7.2 Instance override paths address descendants by `overrideKey`, not by `guid`
+
+`symbolData.symbolOverrides[].guidPath.guids` (and the same field on `derivedSymbolData`) holds
+values that match a node's **`overrideKey`** field, not its `guid`. Looking them up as guids
+finds nothing. In the sample 10,786 nodes carry an `overrideKey` but only 7,860 keys are unique,
+because every duplicate of a component repeats its component's keys — so resolution must prefer
+the candidate that lies inside the symbol the instance actually points at.
+
+Example: instance `2:1329` → symbol `2:1325`, override path `["0:2528"]` → the node whose
+`overrideKey` is `0:2528` **within** `2:1325`'s subtree, i.e. `2:1325` itself.
+
+### 7.3 Component-set properties live on the set, not on the variants
+
+A component set is a `FRAME` with `isStateGroup: true`, and it carries the named
+`componentPropDefs` (including the `VARIANT` properties). Each variant member `SYMBOL` repeats
+the same property **ids** with no `name` and no `type`. In the sample: 1,044 named definitions
+(188 on SYMBOLs, 856 on state-group FRAMEs) versus 3,745 unnamed placeholder entries. Resolving
+`componentPropAssignments[].defID` therefore needs a file-wide map in which named entries win.
+
+### 7.4 Variables link to their collection by `assetRef`, not by parent
+
+`VARIABLE.variableSetID` is a `{ guid, assetRef }` pair, and in practice only the `assetRef.key`
+is populated; it must be matched against a `VARIABLE_SET` node's own `key`. The tree parent is
+no help: in the sample every `VARIABLE` and `VARIABLE_SET` node hangs off the same container
+(`0:2`), not off its collection. Grouping the sample's 273 variables this way partitions them
+exactly across the 27 collections.
+
+Per-mode values live in `variableDataValues.entries[] = { modeID, variableData }`, where
+`modeID` matches a `variableSetModes[].id` on the collection. Alias values
+(`variableData.value.alias`) may chain through several local variables before reaching a
+concrete one, so resolution needs a depth guard.

@@ -1,0 +1,36 @@
+{
+  "name": "figfile-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MCP server that reads local Figma .fig files, fully offline",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.15"
+  },
+  "bin": {
+    "figfile-mcp": "dist/mcp/server.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "npm run build && node --test",
+    "test:fast": "node --test",
+    "start": "node dist/mcp/server.js",
+    "smoke": "node scripts/smoke.mjs",
+    "crosscheck": "node --max-old-space-size=8192 scripts/crosscheck.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "kiwi-schema": "^0.5.0",
+    "typescript": "^7.0.2"
+  }
+}
