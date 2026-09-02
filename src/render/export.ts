@@ -14,7 +14,7 @@ import type { KiwiObject } from '../fig/kiwi.js';
 import type { NodeChange } from '../fig/parse.js';
 import type { TreeNode } from '../model/tree.js';
 import { bytes, num, obj, objArr, str } from '../model/access.js';
-import { BoundsCache } from './bounds.js';
+import { BoundsCache, effectMargins } from './bounds.js';
 import {
   descend,
   instanceShapeNode,
@@ -23,13 +23,14 @@ import {
   resolveInstance,
   type OverrideRecords,
 } from './instance.js';
-import { fromFigma, isIdentity, type Box } from './matrix.js';
+import { expandBox, fromFigma, isIdentity, transformBox, unionBox, type Box } from './matrix.js';
 import {
   classify,
   clipsChildren,
   hasFillGeometry,
   isBooleanOperation,
   isInstance,
+  isMask,
   isVisible,
   nodeOpacity,
   nodeSize,
@@ -38,6 +39,7 @@ import {
 } from './node.js';
 import { decodeCommands, toPathData } from './path.js';
 import { paintAttrs, paintsForStyle, type PaintEnv } from './paint.js';
+import { alphaToWhiteFilter, blendStyle, effectsFilter } from './effects.js';
 import { ReportBuilder, feat } from './report.js';
 import { buildText, hasCharactersWithoutOutlines } from './text.js';
 import { SvgWriter, fmt, toAttr, type Attrs } from './svg.js';
@@ -183,7 +185,12 @@ class Exporter {
       const m = fromFigma(obj(node, 'transform'));
       if (!isIdentity(m)) attrs['transform'] = toAttr(m);
     }
-    if (opacity < 1 && !this.whiteout) attrs['opacity'] = opacity;
+    // A mask's coverage is its geometry, not its appearance: no opacity, blend or effects.
+    if (!this.whiteout) {
+      if (opacity < 1) attrs['opacity'] = opacity;
+      attrs['style'] = blendStyle(node, cls === 'container', this.report, t.key);
+      attrs['filter'] = this.effectsFor(t, node);
+    }
 
     this.out.open('g', attrs);
     if (isInstance(node)) {
@@ -215,11 +222,111 @@ class Exporter {
     if (cls === 'container' && !isBooleanOperation(node)) {
       const clipId = clipsChildren(node) ? this.fillShapeClip(t, node) : undefined;
       if (clipId) this.out.open('g', { 'clip-path': `url(#${clipId})` });
-      for (const child of children) this.emitNode(child, false);
+      this.emitChildren(children);
       if (clipId) this.out.close('g');
     }
 
     if (cls !== 'text') this.emitStrokes(t, node);
+  }
+
+  /** The node's `<filter>`, sized from its own content plus the effective node's effects. */
+  private effectsFor(t: TreeNode, node: NodeChange): string | undefined {
+    if (objArr(node, 'effects').length === 0) return undefined;
+    const content = this.bounds.contentBounds(t) ?? Exporter.box(node);
+    const m = effectMargins(node);
+    const region = expandBox(content, m.left, m.top, m.right, m.bottom);
+    const id = effectsFilter(node, region, this.out, this.report, t.key, this.defKey('filter', t));
+    return id ? `url(#${id})` : undefined;
+  }
+
+  /**
+   * F11 — a child with `mask: true` masks the siblings ABOVE it (later indices) within the same
+   * parent, up to the next sibling that is itself a mask, or the end of the list. The mask layer
+   * is never painted as content.
+   *
+   * Whether a second mask really ends the first one's run could not be measured on the sample;
+   * fixture `cf-mask-two-in-one-parent` decides it. This is the only line to change.
+   */
+  private emitChildren(children: readonly TreeNode[]): void {
+    let i = 0;
+    while (i < children.length) {
+      const child = children[i]!;
+      const childNode = this.effective(child);
+      if (!isMask(childNode)) {
+        this.emitNode(child, false);
+        i += 1;
+        continue;
+      }
+      if (!isVisible(childNode)) {
+        // A hidden mask masks nothing in Figma, so its run is drawn unmasked.
+        this.report.approximated('mask-hidden', child.key);
+        i += 1;
+        continue;
+      }
+      let j = i + 1;
+      while (j < children.length && !isMask(this.effective(children[j]!))) j += 1;
+      const masked = children.slice(i + 1, j);
+      if (masked.length > 0) {
+        const maskId = this.defineMask(child, childNode, masked);
+        this.out.open('g', { mask: `url(#${maskId})` });
+        for (const m of masked) this.emitNode(m, false);
+        this.out.close('g');
+      }
+      i = j;
+    }
+  }
+
+  /**
+   * §4.10 — every Figma mask type becomes a luminance `<mask>`, which avoids depending on the
+   * `mask-type` property. resvg computes mask luminance in sRGB and ignores
+   * `color-interpolation` (Appendix E, R7/R8); the attribute is emitted anyway so browsers agree.
+   */
+  private defineMask(
+    maskT: TreeNode,
+    maskNode: NodeChange,
+    masked: readonly TreeNode[],
+  ): string {
+    const maskType = str(maskNode, 'maskType') ?? 'ALPHA';
+    this.report.seen(feat.mask(maskType));
+
+    return this.out.def(this.defKey('mask', maskT), (id) => {
+      // Never an unbounded region: the rasterizer allocates it (Pitfall 5).
+      let region: Box | undefined;
+      for (const node of [maskT, ...masked]) {
+        const box = this.bounds.renderBounds(node);
+        if (!box) continue;
+        region = unionBox(
+          region,
+          transformBox(fromFigma(obj(this.effective(node), 'transform')), box),
+        );
+      }
+      const r = region ?? { x: 0, y: 0, w: 1, h: 1 };
+
+      const content = this.out.capture(() => {
+        if (maskType === 'OUTLINE') {
+          // Coverage is where the geometry is, whatever colour it was painted.
+          const saved = this.whiteout;
+          this.whiteout = true;
+          try {
+            this.emitNode(maskT, false);
+          } finally {
+            this.whiteout = saved;
+          }
+        } else {
+          this.emitNode(maskT, false);
+        }
+      });
+
+      const body =
+        maskType === 'ALPHA'
+          ? `<g filter="url(#${alphaToWhiteFilter(this.out)})">${content}</g>`
+          : content;
+
+      return (
+        `<mask id="${id}" maskUnits="userSpaceOnUse" x="${fmt(r.x)}" y="${fmt(r.y)}" ` +
+        `width="${fmt(r.w)}" height="${fmt(r.h)}" color-interpolation="sRGB">${body}</mask>`
+      );
+    });
   }
 
   /**

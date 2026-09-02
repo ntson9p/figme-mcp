@@ -312,6 +312,61 @@ export function paintAttrs(
   // An OUTLINE mask only cares where the geometry is, not what colour it is.
   if (env.whiteout) return { fill: '#ffffff' };
 
+  const attrs = paintFill(paint, box, env, guid, type);
+  if (!attrs) return undefined;
+
+  // §4.11 — a paint may carry its own blend mode, which lands on the element it paints.
+  const blend = paintBlendStyle(paint, env, guid);
+  return blend ? { ...attrs, style: blend } : attrs;
+}
+
+/** Paint-level `blendMode`, mapped the same way as the node-level one. */
+function paintBlendStyle(paint: KiwiObject, env: PaintEnv, guid: string): string | undefined {
+  const mode = str(paint, 'blendMode') ?? 'NORMAL';
+  if (mode === 'NORMAL' || mode === 'PASS_THROUGH') return undefined;
+  env.report.seen(feat.blend(mode));
+  const exact = PAINT_BLEND_CSS[mode];
+  if (exact) return `mix-blend-mode:${exact}`;
+  const near = PAINT_BLEND_APPROXIMATE[mode];
+  if (near) {
+    env.report.approximated(feat.blend(mode), guid);
+    return `mix-blend-mode:${near}`;
+  }
+  env.report.unsupported(feat.blend(mode), guid);
+  return undefined;
+}
+
+const PAINT_BLEND_CSS: Record<string, string> = {
+  DARKEN: 'darken',
+  MULTIPLY: 'multiply',
+  COLOR_BURN: 'color-burn',
+  LIGHTEN: 'lighten',
+  SCREEN: 'screen',
+  COLOR_DODGE: 'color-dodge',
+  OVERLAY: 'overlay',
+  SOFT_LIGHT: 'soft-light',
+  HARD_LIGHT: 'hard-light',
+  DIFFERENCE: 'difference',
+  EXCLUSION: 'exclusion',
+  HUE: 'hue',
+  SATURATION: 'saturation',
+  COLOR: 'color',
+  LUMINOSITY: 'luminosity',
+};
+
+const PAINT_BLEND_APPROXIMATE: Record<string, string> = {
+  LINEAR_DODGE: 'screen',
+  LINEAR_BURN: 'multiply',
+};
+
+function paintFill(
+  paint: KiwiObject,
+  box: Box,
+  env: PaintEnv,
+  guid: string,
+  type: string,
+): Attrs | undefined {
+  const opacity = paintOpacity(paint);
   switch (type) {
     case 'SOLID': {
       const alpha = alphaOf(obj(paint, 'color')) * opacity;

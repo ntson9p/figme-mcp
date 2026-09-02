@@ -908,7 +908,7 @@ message "rasterizer not installed" when `rasterizer()` resolves to undefined.
 | R3 | `9:61907` (TILE) → pattern width = intrinsic width × 0.5. |
 | R4 | `2:7389` (373×200, drop shadow 0/4 r8) → PNG at scale 1 is 389×216 (§4.5 margins); some pixel in the bottom margin row 210 has alpha > 0. |
 | R4 | `2:1327` (parent of an OUTLINE mask) → SVG has one `<mask` and the mask node's own guid is not emitted as content outside it; `550:1552` (LUMINANCE) and `2:7384` (ALPHA) render without error, ALPHA's mask contains `filter="url(#`. |
-| R4 | `2:3417` → `approximated` contains `effect:BACKGROUND_BLUR`; `550:1438` → `approximated` contains `blend:LINEAR_BURN`; `2:7093` → `approximated` contains `emoji`. |
+| R4 | `2:7386` → `approximated` contains `effect:BACKGROUND_BLUR` (2:3417 is hidden); `550:1438` → `approximated` contains `blend:LINEAR_BURN`; `2:7093` → `approximated` contains `emoji`. |
 | R5 | via the harness: `fig_render {guid:'2:1339'}` → `content[0].type === 'image'`, decoded PNG 268×80, `content[1]` parses as JSON with `width: 268`; text block ≤ 20 000 chars. `format:'svg'` → text starts with `<svg`. `savePath` → file exists, response has `savedTo`. Unknown guid → `isError`. Page `0:1` with `maxSize: 512` → both dimensions ≤ 512 and `scale < 1`. `maxNodes: 10` on `0:1` → `isError` with a hint mentioning `maxNodes`. |
 | R6 | a NodeChange with a deliberately corrupt blob (built in memory) renders with `unsupported` containing `geometry:corrupt` instead of throwing; rendering a 300-node frame takes < 500 ms after the parse. |
 
@@ -1132,7 +1132,7 @@ you must see when you Read the rendered PNG.
 | `2:7389` | FRAME "Dynamic Island" | 373×200 | drop shadow offset (0,4) r 8 rgba(0,0,0,0.4), knock-out | a soft shadow below; output 389×216 at 1× |
 | `2:1345` | ROUNDED_RECTANGLE | 134×1 | inner shadow offset (1,0) r 0 | a 1-px line |
 | `2:7386` | VECTOR "Blur" | 373×234 | layer blur r 32 | a blurred blob |
-| `2:3417` | ROUNDED_RECTANGLE | 100×100 | BACKGROUND_BLUR r 20 (approximated) | a flat translucent square |
+| `2:3417` | ROUNDED_RECTANGLE | 100×100 | BACKGROUND_BLUR r 20 | **`visible: false`** — renders empty. Use `2:7386` / `2:7384` for the background-blur report instead |
 | `2:1327` → mask `2:1328` | parent / VECTOR | 22×12.4 | OUTLINE mask, 1 masked sibling | only the masked shape's overlap with the mask outline |
 | `2:7384` → mask `2:7385` | parent / VECTOR 393×222 | ALPHA mask (default) | content limited to the mask shape |
 | `550:1552` → mask `550:1553` | parent / INSTANCE 200×200 | LUMINANCE mask | content faded by the mask's brightness |

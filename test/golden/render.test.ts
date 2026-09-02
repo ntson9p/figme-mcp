@@ -430,3 +430,100 @@ describe('R3 — paints rasterized', { skip: skipRaster }, () => {
     assert.deepEqual(a, b, 'one tile period apart the pixels are identical');
   });
 });
+
+describe('R4 — effects, masks and blend modes', { skip }, () => {
+  it('2:7389 builds the drop-shadow chain Figma itself emits', async () => {
+    const { svg, bounds } = await renderNode(entry, '2:7389', { format: 'svg' });
+    // offset (0,4), radius 8, spread 0, rgba(0,0,0,0.4), showShadowBehindNode false
+    assert.deepEqual(bounds, { x: -8, y: -4, w: 389, h: 216 }, 'the shadow margin grows the box');
+    assert.match(svg, /<filter [^>]*color-interpolation-filters="sRGB"/);
+    assert.match(svg, /values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0"/, 'the silhouette trick');
+    assert.match(svg, /<feOffset [^>]*dy="4"/);
+    assert.match(svg, /<feGaussianBlur [^>]*stdDeviation="4"/, 'sigma = radius / 2');
+    assert.match(svg, /<feComposite [^>]*operator="out"/, 'the shadow is knocked out of the shape');
+    assert.match(svg, /0 0 0 0\.4 0"/, 'and tinted with the effect colour alpha');
+  });
+
+  it('an inner shadow uses the arithmetic composite', async () => {
+    const { svg } = await renderNode(entry, '2:1345', { format: 'svg' });
+    assert.match(svg, /<feComposite [^>]*operator="arithmetic" k2="-1" k3="1"/);
+  });
+
+  it('a layer blur blurs the whole result', async () => {
+    const { svg, report } = await renderNode(entry, '2:7386', { format: 'svg' });
+    assert.match(svg, /<feGaussianBlur [^>]*stdDeviation="16"/, 'radius 32 → sigma 16');
+    assert.ok(report.featuresPresent.includes('effect:FOREGROUND_BLUR'));
+  });
+
+  it('a background blur is reported as approximated, not silently dropped', async () => {
+    const { report } = await renderNode(entry, '2:7386', { format: 'svg' });
+    assert.ok(report.approximated.some((a) => a.feature === 'effect:BACKGROUND_BLUR'));
+  });
+
+  it('an OUTLINE mask restricts its sibling and is not painted itself', async () => {
+    const { svg, report } = await renderNode(entry, '2:1327', { format: 'svg' });
+    assert.equal(svg.match(/<mask /g)?.length, 1);
+    assert.ok(report.featuresPresent.includes('mask:OUTLINE'));
+    // The mask's own geometry appears inside <mask>…</mask> and nowhere else.
+    const mask = svg.match(/<mask [^>]*>([\s\S]*?)<\/mask>/)![1]!;
+    assert.match(mask, /fill="#ffffff"/, 'OUTLINE coverage is drawn opaque white');
+    const body = svg.slice(svg.indexOf('</defs>'));
+    assert.ok(!body.includes('matrix(1 0 0 1 0 4.81)'), 'the mask layer is not painted as content');
+  });
+
+  it('an ALPHA mask goes through the alpha-to-white filter', async () => {
+    const { svg, report } = await renderNode(entry, '2:7384', { format: 'svg' });
+    assert.equal(svg.match(/<mask /g)?.length, 1);
+    assert.ok(report.featuresPresent.includes('mask:ALPHA'));
+    const mask = svg.match(/<mask [^>]*>([\s\S]*?)<\/mask>/)![1]!;
+    assert.match(mask, /filter="url\(#/);
+    assert.match(svg, /values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0"/);
+  });
+
+  it('a LUMINANCE mask is emitted as-is', async () => {
+    const { svg, report } = await renderNode(entry, '550:1552', { format: 'svg' });
+    assert.equal(svg.match(/<mask /g)?.length, 1);
+    assert.ok(report.featuresPresent.includes('mask:LUMINANCE'));
+  });
+
+  it('every mask region is bounded', async () => {
+    for (const guid of ['2:1327', '2:7384', '550:1552']) {
+      const { svg } = await renderNode(entry, guid, { format: 'svg' });
+      for (const tag of svg.match(/<mask [^>]*>/g) ?? []) {
+        assert.match(tag, /maskUnits="userSpaceOnUse" x="[^"]+" y="[^"]+" width="[^"]+" height="[^"]+"/, tag);
+      }
+    }
+  });
+
+  it('LINEAR_BURN is approximated with multiply and reported', async () => {
+    const { svg, report } = await renderNode(entry, '550:1438', { format: 'svg' });
+    assert.match(svg, /mix-blend-mode:multiply/);
+    assert.ok(report.approximated.some((a) => a.feature === 'blend:LINEAR_BURN'));
+  });
+
+  it('a NORMAL container isolates so its children composite as a unit', async () => {
+    const { svg } = await renderNode(entry, '2:3205', { format: 'svg' });
+    assert.match(svg, /isolation:isolate/);
+    assert.match(svg, /opacity="0\.65"/);
+  });
+});
+
+describe('R4 — effects rasterized', { skip: skipRaster }, () => {
+  it('2:7389 rasterizes to 389x216 with ink in the shadow margin', async () => {
+    const { result, pixels } = await png('2:7389', { scale: 1 });
+    assert.equal(result.width, 389);
+    assert.equal(result.height, 216);
+    let maxAlpha = 0;
+    for (let x = 0; x < pixels.width; x++) maxAlpha = Math.max(maxAlpha, pixelAt(pixels, x, 210)[3]!);
+    assert.ok(maxAlpha > 0, 'row 210 is below the shape and must carry shadow');
+  });
+
+  it('an OUTLINE mask really cuts the sibling down to the mask shape', async () => {
+    // Instance 2:1342 overrides the symbol background away, leaving only the masked arrow.
+    const { pixels } = await png('2:1342', { scale: 10 });
+    let ink = 0;
+    for (let i = 3; i < pixels.data.length; i += 4) if (pixels.data[i]! > 32) ink++;
+    const ratio = ink / (pixels.width * pixels.height);
+    assert.ok(ratio > 0.1 && ratio < 0.6, `arrow covers ${ratio.toFixed(3)}, not the whole box`);
+  });
+});

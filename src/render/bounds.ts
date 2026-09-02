@@ -119,11 +119,46 @@ export class BoundsCache {
 
   /** Per-side margin the node's visible effects need beyond its content. */
   effectMargins(t: TreeNode): Margins {
+    return effectMargins(t.node);
+  }
+
+  renderBounds(t: TreeNode): Box | undefined {
+    const memo = this.render.get(t);
+    if (memo !== undefined) return memo ?? undefined;
+    this.render.set(t, null);
+
+    const content = this.contentBounds(t);
+    if (!content) return undefined;
+    const m = effectMargins(t.node);
+    const box = m === NO_MARGIN ? content : expandBox(content, m.left, m.top, m.right, m.bottom);
+    this.render.set(t, box);
+    return box;
+  }
+
+  /** Bounds of `t` expressed in the coordinate space of `ancestor` (excluding its transform). */
+  boundsIn(t: TreeNode, ancestor: TreeNode): Box | undefined {
+    let box = this.renderBounds(t);
+    if (!box) return undefined;
+    for (let cur: TreeNode | undefined = t; cur && cur !== ancestor; cur = cur.parent) {
+      box = transformBox(fromFigma(obj(cur.node, 'transform')), box);
+    }
+    return box;
+  }
+}
+
+/**
+ * Per-side margin a node's visible effects need beyond its content.
+ *
+ * Pure and node-based rather than tree-based, so the exporter can size a `<filter>` from the
+ * EFFECTIVE node — inside an instance the effects may come from an override (F17).
+ */
+export function effectMargins(node: NodeChange): Margins {
+  {
     let left = 0;
     let top = 0;
     let right = 0;
     let bottom = 0;
-    for (const effect of objArr(t.node, 'effects')) {
+    for (const effect of objArr(node, 'effects')) {
       if (bool(effect, 'visible') === false) continue;
       const type = str(effect, 'type');
       const radius = num(effect, 'radius') ?? 0;
@@ -151,28 +186,5 @@ export class BoundsCache {
       right: Math.max(0, right),
       bottom: Math.max(0, bottom),
     };
-  }
-
-  renderBounds(t: TreeNode): Box | undefined {
-    const memo = this.render.get(t);
-    if (memo !== undefined) return memo ?? undefined;
-    this.render.set(t, null);
-
-    const content = this.contentBounds(t);
-    if (!content) return undefined;
-    const m = this.effectMargins(t);
-    const box = m === NO_MARGIN ? content : expandBox(content, m.left, m.top, m.right, m.bottom);
-    this.render.set(t, box);
-    return box;
-  }
-
-  /** Bounds of `t` expressed in the coordinate space of `ancestor` (excluding its transform). */
-  boundsIn(t: TreeNode, ancestor: TreeNode): Box | undefined {
-    let box = this.renderBounds(t);
-    if (!box) return undefined;
-    for (let cur: TreeNode | undefined = t; cur && cur !== ancestor; cur = cur.parent) {
-      box = transformBox(fromFigma(obj(cur.node, 'transform')), box);
-    }
-    return box;
   }
 }
