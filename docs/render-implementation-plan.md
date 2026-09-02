@@ -127,7 +127,7 @@ dataBlob }, imageScaleMode, rotation, scale, paintFilter, filterColorAdjust, …
 if absent and `image.dataBlob` is set, `fig.blobs[dataBlob].bytes`. Sample: 247 PNG, 5 JPEG,
 1 unidentified. Scale modes: `FILL` = cover the box, centred, cropped; `FIT` = contain,
 centred; `STRETCH` = fill the box non-uniformly (all 396 in the sample have the identity
-`imageTransform`; a non-identity transform is Figma's "crop" — see §4.7.3); `TILE` = repeat at
+`transform`; a non-identity transform is Figma's "crop" — see §4.7.3); `TILE` = repeat at
 `scale × intrinsic size` from the node's top-left.
 
 **F7 — Gradient transform convention.** `paint.transform` maps the node's **normalized box**
@@ -535,7 +535,10 @@ Stops sorted by `position` (clamped 0..1). Return `{ fill: 'url(#id)' }`.
 GRADIENT_ANGULAR and GRADIENT_DIAMOND: report `paint:GRADIENT_ANGULAR` / `paint:GRADIENT_DIAMOND`
 as **approximated** and draw a SOLID of the stop-average colour (so the shape is not invisible).
 
-**4.7.3 IMAGE.** Resolve bytes (F6); `sniffImage` → mime; only `image/png`, `image/jpeg`,
+**4.7.3 IMAGE.** *(measured correction: the schema has NO `imageTransform` field — the crop
+matrix is `paint.transform`, the same field gradients use, and `originalImageWidth/Height` give
+the intrinsic size directly, so `sniffImage` is only needed for the mime type. All 212 distinct
+image hashes in the sample are ZIP entries; none need `dataBlob`.)* Resolve bytes (F6); `sniffImage` → mime; only `image/png`, `image/jpeg`,
 `image/gif` are embedded (resvg decodes these); anything else → report `image-format:<mime>`,
 draw nothing. Missing bytes → `image-missing`. Build the data URI once per hash (cache).
 Register a `<pattern>` def keyed by `(hash, mode, box.w, box.h, rotation, transform)`:
@@ -544,8 +547,8 @@ Register a `<pattern>` def keyed by `(hash, mode, box.w, box.h, rotation, transf
 |---|---|
 | FILL | `<image width="{box.w}" height="{box.h}" preserveAspectRatio="xMidYMid slice" xlink:href="data:…"/>` |
 | FIT | same with `preserveAspectRatio="xMidYMid meet"` |
-| STRETCH, identity `imageTransform` | same with `preserveAspectRatio="none"` |
-| STRETCH, other transform (Figma "crop") | `<image width="{iw}" height="{ih}" preserveAspectRatio="none" transform="matrix(M)"/>` with `M = multiply(multiply(scale(box.w, box.h), invert(fromFigma(imageTransform))), scale(1/iw, 1/ih))` — **candidate A**. Report `image-crop` as approximated until fixture `cf-image-crop` confirms; if the crop comes out wrong, use candidate B: `M = multiply(multiply(scale(box.w, box.h), fromFigma(imageTransform)), scale(1/iw, 1/ih))` |
+| STRETCH, identity `transform` | same with `preserveAspectRatio="none"` |
+| STRETCH, other transform (Figma "crop") | `<image width="{iw}" height="{ih}" preserveAspectRatio="none" transform="matrix(M)"/>` with `M = multiply(multiply(scale(box.w, box.h), invert(fromFigma(transform))), scale(1/iw, 1/ih))` — **candidate A**. Report `image-crop` as approximated until fixture `cf-image-crop` confirms; if the crop comes out wrong, use candidate B: `M = multiply(multiply(scale(box.w, box.h), fromFigma(transform)), scale(1/iw, 1/ih))` |
 | TILE | pattern `width="{iw×scale}" height="{ih×scale}"` containing `<image width="{iw×scale}" height="{ih×scale}" preserveAspectRatio="none" …/>`; `scale = num(paint,'scale') ?? 1` |
 
 `iw, ih` come from `sniffImage`. `paint.rotation` (degrees, multiples of 90): wrap the

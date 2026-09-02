@@ -106,8 +106,16 @@ class Exporter {
     return bytes(this.entry.fig.blobs[index], 'bytes');
   }
 
+  private readonly images = new Map<string, string | null>();
+
   private get env(): PaintEnv {
-    return { report: this.report, whiteout: this.whiteout };
+    return {
+      report: this.report,
+      out: this.out,
+      entry: this.entry,
+      images: this.images,
+      whiteout: this.whiteout,
+    };
   }
 
   private static box(node: NodeChange): Box {

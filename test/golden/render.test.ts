@@ -348,3 +348,85 @@ describe('R2 — text rasterized', { skip: skipRaster }, () => {
     assert.ok(ink.y1 > 160, 'and the underline under the last line');
   });
 });
+
+describe('R3 — paints (F6, F7)', { skip }, () => {
+  it('2:7082 builds a linear gradient that runs top to bottom (F7)', async () => {
+    const { svg } = await renderNode(entry, '2:7082', { format: 'svg' });
+    const tag = svg.match(/<linearGradient[^>]*>/)?.[0];
+    assert.ok(tag, 'a linearGradient is registered');
+    assert.match(tag!, /gradientUnits="userSpaceOnUse"/);
+    assert.match(tag!, /x1="0" y1="0\.5" x2="1" y2="0\.5"/);
+    const nums = tag!.match(/gradientTransform="matrix\(([^)]+)\)"/)![1]!.split(' ').map(Number);
+    const [a, b, c, d, e, f] = nums as [number, number, number, number, number, number];
+    const apply = (x: number, y: number): [number, number] => [a * x + c * y + e, b * x + d * y + f];
+    // The node is 12x12: the gradient must start at the top centre and end at the bottom centre.
+    const start = apply(0, 0.5);
+    const end = apply(1, 0.5);
+    assert.ok(Math.abs(start[0] - 6) < 0.01 && Math.abs(start[1] - 0) < 0.01, String(start));
+    assert.ok(Math.abs(end[0] - 6) < 0.01 && Math.abs(end[1] - 12) < 0.01, String(end));
+  });
+
+  it('gradient stops carry the paint opacity', async () => {
+    const { svg } = await renderNode(entry, '2446:26422', { format: 'svg' });
+    assert.match(svg, /<radialGradient[^>]*cx="0\.5" cy="0\.5" r="0\.5"/);
+    assert.match(svg, /stop-opacity="0\.4"/, 'paint opacity 0.4 reaches the stops');
+  });
+
+  it('2:2050 fills an ellipse with a cover-fitted image', async () => {
+    const { svg, report } = await renderNode(entry, '2:2050', { format: 'svg' });
+    assert.equal(svg.match(/<pattern /g)?.length, 1);
+    assert.match(svg, /preserveAspectRatio="xMidYMid slice"/);
+    assert.match(svg, /xlink:href="data:image\/(png|jpeg);base64,/);
+    assert.ok(report.featuresPresent.includes('image-mode:FILL'));
+    assert.deepEqual(report.unsupported, []);
+  });
+
+  it('9:61907 tiles at intrinsic size times the paint scale', async () => {
+    const { svg } = await renderNode(entry, '9:61907', { format: 'svg' });
+    // 256 px source at scale 0.5 → a 128 px tile, repeated across a 610x137 box.
+    assert.match(svg, /<pattern id="p1" patternUnits="userSpaceOnUse" x="0" y="0" width="128" height="128">/);
+  });
+
+  it('a STRETCH image with an identity transform is not treated as a crop', async () => {
+    const { svg, report } = await renderNode(entry, '2:1538', { format: 'svg' });
+    assert.match(svg, /preserveAspectRatio="none"/);
+    assert.ok(!report.approximated.some((a) => a.feature === 'image-crop'));
+  });
+
+  it('the same image is embedded once however many nodes use it', async () => {
+    const { svg } = await renderNode(entry, '2:2050', { format: 'svg' });
+    assert.equal(svg.match(/base64,/g)?.length, 1);
+  });
+
+  it('every paint type in the file is either drawn or reported', async () => {
+    const { report } = await renderNode(entry, '2:7082', { format: 'svg' });
+    assert.ok(report.featuresPresent.some((f) => f.startsWith('paint:')));
+  });
+});
+
+describe('R3 — paints rasterized', { skip: skipRaster }, () => {
+  it('the gradient is lighter at the top than at the bottom', async () => {
+    const { pixels } = await png('2:7082', { scale: 4 });
+    const top = pixelAt(pixels, pixels.width >> 1, 2);
+    const bottom = pixelAt(pixels, pixels.width >> 1, pixels.height - 3);
+    // Appendix A: rgb(241,159,180) at the top fading to rgb(238,123,149).
+    assert.ok(Math.abs(top[1]! - 159) < 12, `top green ${top[1]}`);
+    assert.ok(Math.abs(bottom[1]! - 123) < 12, `bottom green ${bottom[1]}`);
+    assert.ok(top[1]! > bottom[1]! + 20, 'and the top really is the lighter end');
+  });
+
+  it('2:2050 paints the photo inside the ellipse and nothing outside it', async () => {
+    const { result, pixels } = await png('2:2050', { scale: 1 });
+    assert.equal(result.width, 96);
+    assert.equal(pixelAt(pixels, 48, 48)[3], 255, 'the middle is opaque');
+    assert.equal(pixelAt(pixels, 2, 2)[3], 0, 'the corner is outside the ellipse');
+  });
+
+  it('the tile repeats rather than stretching once', async () => {
+    const { pixels } = await png('9:61907', { scale: 1 });
+    // Two points a whole tile apart must match; the tile is 128 px wide.
+    const a = pixelAt(pixels, 10, 10);
+    const b = pixelAt(pixels, 138, 10);
+    assert.deepEqual(a, b, 'one tile period apart the pixels are identical');
+  });
+});
