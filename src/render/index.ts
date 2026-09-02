@@ -153,7 +153,7 @@ export async function renderNode(
   };
 }
 
-export { rasterizer } from './raster.js';
+export { rasterizer, rasterize } from './raster.js';
 export type { NodeBox } from './export.js';
 export type { RenderReport } from './report.js';
 export type { Box } from './matrix.js';

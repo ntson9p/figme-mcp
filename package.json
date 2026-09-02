@@ -23,7 +23,9 @@
     "start": "node dist/mcp/server.js",
     "smoke": "node scripts/smoke.mjs",
     "crosscheck": "node --max-old-space-size=8192 scripts/crosscheck.mjs",
-    "render": "node scripts/render.mjs"
+    "render": "node scripts/render.mjs",
+    "visual": "node scripts/visual.mjs",
+    "visual:update": "node scripts/visual.mjs --update"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

@@ -24,6 +24,7 @@ import { renderNode, rasterizer } from '../../dist/render/index.js';
 import { isKnownFeature } from '../../dist/render/report.js';
 import { connect, type Harness } from '../fixtures/mcp.ts';
 import { decodePng, inkBounds, pixelAt } from '../visual/lib/png.ts';
+import { svgProblems } from '../visual/lib/svgcheck.ts';
 
 const skip = ASSET_EXISTS ? false : SKIP_MESSAGE;
 
@@ -638,24 +639,12 @@ describe('R6 — hardening', { skip }, () => {
     }
   });
 
-  it('the SVG is always balanced, even for the busiest frames', async () => {
-    for (const guid of ['2:1339', '2:1401', '2:7098', '2:1327', '2:7384']) {
+  it('the SVG is structurally sound for every kind of frame', async () => {
+    // Includes 2:2050, whose embedded base64 image happens to contain the letters "NaN" —
+    // the checker must strip data URIs before scanning, or it reports a defect that is not one.
+    for (const guid of ['2:1339', '2:1401', '2:7098', '2:1327', '2:7384', '2:2050', '2:7389']) {
       const { svg } = await renderNode(entry, guid, { format: 'svg' });
-      const opens = (svg.match(/<g[ >]/g) ?? []).length;
-      const closes = (svg.match(/<\/g>/g) ?? []).length;
-      assert.equal(opens, closes, `${guid}: ${opens} <g> vs ${closes} </g>`);
-      assert.ok(!svg.includes('NaN') && !svg.includes('Infinity'), `${guid} has a non-finite number`);
-      assert.ok(!svg.includes('undefined'), `${guid} has an undefined attribute`);
-    }
-  });
-
-  it('every url(#id) reference resolves to an id in the same document', async () => {
-    for (const guid of ['2:1339', '2:1401', '2:2050', '2:7389', '2:1327']) {
-      const { svg } = await renderNode(entry, guid, { format: 'svg' });
-      const ids = new Set([...svg.matchAll(/ id="([^"]+)"/g)].map((m) => m[1]!));
-      for (const ref of svg.matchAll(/url\(#([^)]+)\)/g)) {
-        assert.ok(ids.has(ref[1]!), `${guid}: url(#${ref[1]}) has no matching id`);
-      }
+      assert.deepEqual(svgProblems(svg), [], guid);
     }
   });
 

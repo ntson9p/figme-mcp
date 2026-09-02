@@ -1,0 +1,18 @@
+{
+  "note": "Hand-picked frames from the development asset. No Figma exports, so only levels 1-2 and the coverage scan run. Recreate design.fig with: cp figma-input/sample.fig fixtures/sample/design.fig",
+  "exportedAt": "2026-09-02T00:00:00Z",
+  "frames": [
+    { "guid": "2:1558", "name": "rounded rectangle — path decoding" },
+    { "guid": "2:1339", "name": "tab frame — inside stroke, clip, text, instances" },
+    { "guid": "2:1307", "name": "boolean XOR — combined geometry" },
+    { "guid": "2:1336", "name": "single glyph — y-up glyph axis" },
+    { "guid": "2:6971", "name": "Japanese text block — underline decorations" },
+    { "guid": "2:7082", "name": "avatar — linear gradient" },
+    { "guid": "2:2050", "name": "photo clipped to an ellipse — image FILL" },
+    { "guid": "9:61907", "name": "texture — image TILE" },
+    { "guid": "2:7389", "name": "Dynamic Island — drop shadow" },
+    { "guid": "2:1327", "name": "arrow symbol — OUTLINE mask" },
+    { "guid": "2:1401", "name": "tab instance — nested instance and overrides" },
+    { "guid": "2:7098", "name": "status bar — emoji and mixed runs" }
+  ]
+}

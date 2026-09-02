@@ -1,2 +1,7 @@
 node_modules/
 dist/
+reports/
+
+# Fixture .fig files are the user's own designs and can be large; commit only small
+# conformance fixtures deliberately.
+fixtures/*/design.fig
