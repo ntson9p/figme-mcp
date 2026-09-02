@@ -127,7 +127,11 @@ check('modes and values are listed',
 console.log('\n8. fig_render on the tab frame (2:1339)');
 const render = await call('fig_render', { guid: '2:1339', scale: 2 });
 check('render succeeds', !render.isError, render.text.slice(0, 200));
-if (!render.isError) {
+if (!render.isError && render.first?.type === 'text' && render.text.startsWith('<svg')) {
+  // The rasterizer is an optional dependency; without it the tool returns SVG, by design.
+  check('SVG fallback is a complete document', render.text.endsWith('</svg>'));
+  console.log('   no rasterizer installed — returned SVG (this is the documented fallback)');
+} else if (!render.isError) {
   check('returns viewable image content', render.first?.type === 'image', `type=${render.first?.type}`);
   const report = render.json;
   check('268x80 at scale 2', report.width === 268 && report.height === 80,
