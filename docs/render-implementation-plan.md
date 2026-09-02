@@ -86,8 +86,8 @@ string; index 0 is the **bottom-most** layer and is drawn first. DFS order = pai
 **F3 — Derived geometry.** `fillGeometry: Path[]` and `strokeGeometry: Path[]` with
 `Path { windingRule: NONZERO|ODD, commandsBlob: uint, styleID: uint }`. `commandsBlob` indexes
 `fig.blobs`. Coordinates are **node-local pixels** (an 18×14 rectangle decodes to a path inside
-0..18 × 0..14). Strokes are already outlined into fill regions (stroke weight, alignment, caps,
-joins are baked in). `BOOLEAN_OPERATION` nodes carry the **combined** result; their children
+0..18 × 0..14). Strokes are already outlined into fill regions (weight, caps and joins are baked
+in) — but **alignment is NOT**, see F16. `BOOLEAN_OPERATION` nodes carry the **combined** result; their children
 are operands and **must not be drawn**. In the sample every visible stroke has `strokeGeometry`,
 every boolean with a fill has `fillGeometry`, and the only vectors lacking geometry are boolean
 operands (11 007) or paint-less (3). 307 `fillGeometry` entries have `styleID ≠ 0`.
@@ -168,6 +168,19 @@ full-bleed child). Effects apply to the whole result; layer `opacity` applies af
 **F14 — Sizes.** The document has 116 142 nodes; page `0:2` "Page 1" holds
 hidden copies of library components used by instances — its nodes render like any others. The
 whole render region of the file is 25 134 × 13 792 px, so whole-page renders must downscale.
+
+**F16 — Stroke alignment is not baked in** (measured during R1; corrects F3). `strokeGeometry`
+for `strokeAlign: INSIDE` or `OUTSIDE` is a band of **double** the stroke weight straddling the
+shape edge; Figma clips it at render time. Measured overshoot beyond the node box, over the
+whole sample: exactly **1.00 × weight** for INSIDE (8 930 nodes) and OUTSIDE (125), and
+**0.50 × weight** for CENTER (2 737) — CENTER geometry is therefore already final.
+`StrokeAlign { CENTER=0, INSIDE=1, OUTSIDE=2, OFFSET=3 }`, so an absent field means CENTER, the
+alignment that needs no clip. Every INSIDE/OUTSIDE node with a visible stroke in the sample has
+`fillGeometry` to clip against; the 1 256 stroked nodes without it are all CENTER `LINE`s.
+Consequences, both implemented in §4.4: the exporter must clip INSIDE strokes to the fill shape
+and OUTSIDE strokes to its complement, and `contentBounds` must not count the raw INSIDE band —
+otherwise the 134×40 frame `2:1339` exports as 134×41 and every bordered frame gains a
+half-stroke of bleed.
 
 **F15 — Existing APIs to reuse** (do not duplicate): `FileCache.get(file): CacheEntry
 { fig, index }`, `FileIndex.node(guid)`, `FileIndex.subtreeRange(root)`, `TreeNode
@@ -1224,6 +1237,9 @@ fixtures; check each file's licence before committing it.
 17. **A wrong `renderBounds` crops effects rather than shifting them**: the `<filter>` region
     clips its own output, so a shadow that looks cut off on one side means the §4.5 margin rule
     is too small, not that the filter chain is wrong.
+18. **Stroke alignment still needs a clip** (F16): `strokeGeometry` for INSIDE/OUTSIDE is a
+    DOUBLE-width band straddling the edge. Drawn raw it paints a double-width border that
+    bleeds outside the node, and it inflates the render bounds by the stroke weight.
 
 ---
 
@@ -1232,7 +1248,7 @@ fixtures; check each file's licence before committing it.
 `node-type:<TYPE>` · `paint:<TYPE>` · `effect:<TYPE>` · `blend:<MODE>` · `mask:<TYPE>` ·
 `image-mode:<MODE>` · `image-missing` · `image-format:<mime>` · `image-crop` ·
 `image-rotation` · `image-filters` · `gradient-singular` · `emoji` · `glyph-rotation` ·
-`text-without-outlines` · `text-stroke` · `text-decoration` · `stroke-dashed` ·
+`text-without-outlines` · `text-stroke` · `text-decoration` · `stroke-dashed` · `stroke-align:<ALIGN>` ·
 `stroke-without-geometry` · `vector-without-geometry` · `geometry:corrupt` ·
 `geometry:synthesised` · `mask-hidden` · `oversize`.
 

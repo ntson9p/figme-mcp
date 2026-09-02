@@ -22,7 +22,8 @@
     "test:fast": "node --test",
     "start": "node dist/mcp/server.js",
     "smoke": "node scripts/smoke.mjs",
-    "crosscheck": "node --max-old-space-size=8192 scripts/crosscheck.mjs"
+    "crosscheck": "node --max-old-space-size=8192 scripts/crosscheck.mjs",
+    "render": "node scripts/render.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -30,7 +31,10 @@
   },
   "devDependencies": {
     "@types/node": "^26.4.0",
+    "@types/pngjs": "^6.0.5",
     "kiwi-schema": "^0.5.0",
+    "pixelmatch": "^7.2.0",
+    "pngjs": "^7.0.0",
     "typescript": "^7.0.2"
   },
   "optionalDependencies": {
