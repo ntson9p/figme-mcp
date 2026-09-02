@@ -12,8 +12,16 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { ASSET_EXISTS, ASSET_PATH, SKIP_MESSAGE } from '../fixtures/asset.ts';
 import type { CacheEntry } from '../../dist/cache.js';
-import { decodeCommands, roundCommands, toPathData } from '../../dist/render/path.js';
+import {
+  decodeCommands,
+  ellipseCommands,
+  pathBounds,
+  roundCommands,
+  roundedRectCommands,
+  toPathData,
+} from '../../dist/render/path.js';
 import { renderNode, rasterizer } from '../../dist/render/index.js';
+import { isKnownFeature } from '../../dist/render/report.js';
 import { connect, type Harness } from '../fixtures/mcp.ts';
 import { decodePng, inkBounds, pixelAt } from '../visual/lib/png.ts';
 
@@ -609,5 +617,98 @@ describe('R5 — the fig_render tool', { skip: skipRaster }, () => {
     const tools = await harness.listTools();
     assert.equal(tools.length, 12);
     assert.ok(tools.some((t) => t.name === 'fig_render'));
+  });
+});
+
+describe('R6 — hardening', { skip }, () => {
+  it('a corrupt blob is reported and does not abort the render', async () => {
+    // Point a real node's geometry at a blob whose opcode does not exist.
+    const node = entry.index.node('2:1558')!.node as Record<string, unknown>;
+    const original = node['fillGeometry'];
+    const badIndex = entry.fig.blobs.length;
+    (entry.fig.blobs as unknown[]).push({ bytes: new Uint8Array([9, 9, 9, 9]) });
+    node['fillGeometry'] = [{ windingRule: 'NONZERO', commandsBlob: badIndex, styleID: 0 }];
+    try {
+      const { svg, report } = await renderNode(entry, '2:1558', { format: 'svg' });
+      assert.ok(report.unsupported.some((u) => u.feature === 'geometry:corrupt'));
+      assert.ok(svg.startsWith('<svg') && svg.endsWith('</svg>'), 'the document stays well-formed');
+    } finally {
+      node['fillGeometry'] = original;
+      (entry.fig.blobs as unknown[]).pop();
+    }
+  });
+
+  it('the SVG is always balanced, even for the busiest frames', async () => {
+    for (const guid of ['2:1339', '2:1401', '2:7098', '2:1327', '2:7384']) {
+      const { svg } = await renderNode(entry, guid, { format: 'svg' });
+      const opens = (svg.match(/<g[ >]/g) ?? []).length;
+      const closes = (svg.match(/<\/g>/g) ?? []).length;
+      assert.equal(opens, closes, `${guid}: ${opens} <g> vs ${closes} </g>`);
+      assert.ok(!svg.includes('NaN') && !svg.includes('Infinity'), `${guid} has a non-finite number`);
+      assert.ok(!svg.includes('undefined'), `${guid} has an undefined attribute`);
+    }
+  });
+
+  it('every url(#id) reference resolves to an id in the same document', async () => {
+    for (const guid of ['2:1339', '2:1401', '2:2050', '2:7389', '2:1327']) {
+      const { svg } = await renderNode(entry, guid, { format: 'svg' });
+      const ids = new Set([...svg.matchAll(/ id="([^"]+)"/g)].map((m) => m[1]!));
+      for (const ref of svg.matchAll(/url\(#([^)]+)\)/g)) {
+        assert.ok(ids.has(ref[1]!), `${guid}: url(#${ref[1]}) has no matching id`);
+      }
+    }
+  });
+
+  it('the report vocabulary is frozen — nothing invents a feature key', async () => {
+    for (const guid of ['0:2', '2:1339', '2:7098', '2:7384', '2:1401', '2:2050']) {
+      const { report } = await renderNode(entry, guid, { format: 'svg' });
+      for (const feature of [
+        ...report.featuresPresent,
+        ...report.unsupported.map((u) => u.feature),
+        ...report.approximated.map((a) => a.feature),
+      ]) {
+        assert.ok(isKnownFeature(feature), `${guid}: "${feature}" is not in Appendix D`);
+      }
+    }
+  });
+
+  it('a 300-node frame exports in well under half a second', async () => {
+    const started = performance.now();
+    const { report } = await renderNode(entry, '2:7098', { format: 'svg' });
+    const elapsed = performance.now() - started;
+    assert.ok(report.nodesVisited > 5, `${report.nodesVisited} nodes`);
+    assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)} ms`);
+  });
+
+  it('geometry can be synthesised when a file carries none', () => {
+    // Files written by other tools may omit fillGeometry; §4.14 rebuilds the simple shapes.
+    const rect = roundedRectCommands(10, 6, [2, 2, 2, 2]);
+    assert.equal(rect[0]!.op, 'M');
+    assert.deepEqual(pathBounds(rect), { x: 0, y: 0, w: 10, h: 6 });
+    const ellipse = ellipseCommands(10, 6);
+    assert.deepEqual(pathBounds(ellipse), { x: 0, y: 0, w: 10, h: 6 });
+    assert.deepEqual(roundedRectCommands(0, 5), [], 'a degenerate box yields no path');
+  });
+
+  it('a hidden page renders an empty document rather than failing', async () => {
+    // 0:2 "Page 1" is visible:false — it holds hidden library copies.
+    const { svg, report } = await renderNode(entry, '0:2', { format: 'svg' });
+    assert.equal(report.nodesDrawn, 0);
+    assert.ok(svg.startsWith('<svg') && svg.endsWith('</svg>'));
+  });
+
+  it('a whole page renders inside the time and node budgets', async () => {
+    const started = performance.now();
+    const { report, width, height } = await renderNode(entry, '0:1', {
+      maxSize: 1024,
+      format: 'svg',
+    });
+    const elapsed = performance.now() - started;
+    assert.ok(elapsed < 10_000, `took ${(elapsed / 1000).toFixed(1)} s`);
+    assert.ok(width <= 1024 && height <= 1024, `${width}x${height}`);
+    // Instance expansion means the walk is far larger than the 14 912-node layer tree.
+    assert.ok(report.nodesVisited > 60_000, `${report.nodesVisited} visited`);
+    assert.ok(report.unsupported.length > 0, 'and every skipped feature is named');
+    assert.ok(report.unsupported.some((u) => u.feature.startsWith('node-type:')));
   });
 });

@@ -1298,8 +1298,13 @@ fixtures; check each file's licence before committing it.
 `image-rotation` · `image-filters` · `gradient-singular` · `emoji` · `glyph-rotation` ·
 `text-without-outlines` · `text-stroke` · `text-decoration` · `stroke-dashed` · `stroke-align:<ALIGN>` ·
 `stroke-without-geometry` · `vector-without-geometry` · `geometry:corrupt` ·
-`geometry:synthesised` · `mask-hidden` · `oversize` · `instance-unresolved` ·
-`instance-recursive`.
+`geometry:synthesised` · `mask-hidden` · `oversize` · `svg-rejected` ·
+`instance-unresolved` · `instance-recursive` · `node-failed` · `stroke-align:<ALIGN>`.
+
+The list is frozen in `src/render/report.ts` (`FEATURES` plus `FEATURE_PREFIXES`), and
+`isKnownFeature()` guards it: a golden test renders six subtrees and fails if any reported key
+is outside the vocabulary, so a typo cannot silently create a feature the coverage matrix will
+never recognise.
 
 `featuresPresent` uses the same keys for what exists in a subtree (e.g. `paint:SOLID`,
 `effect:DROP_SHADOW`, `blend:MULTIPLY`, `mask:OUTLINE`, `image-mode:FILL`,

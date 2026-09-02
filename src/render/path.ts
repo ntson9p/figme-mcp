@@ -113,3 +113,72 @@ export function roundCommands(cmds: readonly PathCommand[], decimals: number): P
   const factor = 10 ** decimals;
   return cmds.map((c) => ({ op: c.op, args: c.args.map((v) => Math.round(v * factor) / factor) }));
 }
+
+/** Control-point ratio that turns four cubics into a circle to within 0.02 %. */
+const KAPPA = 0.5522847498307936;
+
+/**
+ * A rounded rectangle, for §4.14: files written by other tools may carry no `fillGeometry`.
+ * Radii are clamped so adjacent corners cannot overlap.
+ */
+export function roundedRectCommands(
+  w: number,
+  h: number,
+  radii: readonly [number, number, number, number] = [0, 0, 0, 0],
+): PathCommand[] {
+  if (!(w > 0) || !(h > 0)) return [];
+  const limit = Math.min(w, h) / 2;
+  const [tl, tr, br, bl] = radii.map((r) => Math.max(0, Math.min(r, limit))) as [
+    number,
+    number,
+    number,
+    number,
+  ];
+  const arc = (
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+    cx: number,
+    cy: number,
+  ): PathCommand => ({
+    op: 'C',
+    args: [
+      fromX + (cx - fromX) * KAPPA,
+      fromY + (cy - fromY) * KAPPA,
+      toX + (cx - toX) * KAPPA,
+      toY + (cy - toY) * KAPPA,
+      toX,
+      toY,
+    ],
+  });
+
+  const out: PathCommand[] = [{ op: 'M', args: [tl, 0] }];
+  out.push({ op: 'L', args: [w - tr, 0] });
+  if (tr > 0) out.push(arc(w - tr, 0, w, tr, w, 0));
+  out.push({ op: 'L', args: [w, h - br] });
+  if (br > 0) out.push(arc(w, h - br, w - br, h, w, h));
+  out.push({ op: 'L', args: [bl, h] });
+  if (bl > 0) out.push(arc(bl, h, 0, h - bl, 0, h));
+  out.push({ op: 'L', args: [0, tl] });
+  if (tl > 0) out.push(arc(0, tl, tl, 0, 0, 0));
+  out.push({ op: 'Z', args: [] });
+  return out;
+}
+
+/** An ellipse inscribed in `w × h`, as four cubic arcs. */
+export function ellipseCommands(w: number, h: number): PathCommand[] {
+  if (!(w > 0) || !(h > 0)) return [];
+  const rx = w / 2;
+  const ry = h / 2;
+  const ox = rx * KAPPA;
+  const oy = ry * KAPPA;
+  return [
+    { op: 'M', args: [rx, 0] },
+    { op: 'C', args: [rx + ox, 0, w, ry - oy, w, ry] },
+    { op: 'C', args: [w, ry + oy, rx + ox, h, rx, h] },
+    { op: 'C', args: [rx - ox, h, 0, ry + oy, 0, ry] },
+    { op: 'C', args: [0, ry - oy, rx - ox, 0, rx, 0] },
+    { op: 'Z', args: [] },
+  ];
+}

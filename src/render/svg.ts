@@ -108,6 +108,17 @@ export class SvgWriter {
   }
 
   /**
+   * Close every element opened past `depth`. Used to recover from a node that threw halfway
+   * through: the document stays well-formed and the rest of the render continues.
+   */
+  unwindTo(depth: number): void {
+    while (this.stack.length > depth) {
+      const tag = this.stack.pop()!;
+      this.body.push(`</${tag}>`);
+    }
+  }
+
+  /**
    * Register a `<defs>` entry once per `key` and return its id. `build` receives the id it must
    * use. Re-entrant: `build` may itself register defs (a mask whose content needs a clipPath).
    */

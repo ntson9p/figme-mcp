@@ -56,7 +56,28 @@ export const FEATURES = [
   'mask-hidden',
   'oversize',
   'svg-rejected',
+  'instance-unresolved',
+  'instance-recursive',
+  'node-failed',
 ] as const;
+
+/** Prefixes of the parameterised keys built by `feat` below. */
+export const FEATURE_PREFIXES = [
+  'node-type:',
+  'paint:',
+  'effect:',
+  'blend:',
+  'mask:',
+  'stroke-align:',
+  'image-mode:',
+  'image-format:',
+] as const;
+
+/** True when `feature` is part of the frozen vocabulary; used to guard against typos. */
+export function isKnownFeature(feature: string): boolean {
+  if ((FEATURES as readonly string[]).includes(feature)) return true;
+  return FEATURE_PREFIXES.some((p) => feature.startsWith(p) && feature.length > p.length);
+}
 
 export const feat = {
   nodeType: (type: string): string => `node-type:${type}`,

@@ -13,7 +13,7 @@ import type { CacheEntry } from '../cache.js';
 import type { KiwiObject } from '../fig/kiwi.js';
 import type { NodeChange } from '../fig/parse.js';
 import type { TreeNode } from '../model/tree.js';
-import { bytes, num, obj, objArr, str } from '../model/access.js';
+import { bool, bytes, num, obj, objArr, str } from '../model/access.js';
 import { BoundsCache, effectMargins } from './bounds.js';
 import {
   descend,
@@ -37,7 +37,7 @@ import {
   nodeType,
   strokeAlign,
 } from './node.js';
-import { decodeCommands, toPathData } from './path.js';
+import { decodeCommands, ellipseCommands, roundedRectCommands, toPathData } from './path.js';
 import { paintAttrs, paintsForStyle, type PaintEnv } from './paint.js';
 import { alphaToWhiteFilter, blendStyle, effectsFilter } from './effects.js';
 import { ReportBuilder, feat } from './report.js';
@@ -58,6 +58,34 @@ export const HARD_MAX_VISITS = 400_000;
 export const MAX_SVG_BYTES = 64 * 1024 * 1024;
 /** Instances nested deeper than this are almost certainly a cycle in a damaged file. */
 const MAX_INSTANCE_DEPTH = 24;
+
+/** Node types whose shape can be rebuilt from size and corner radii when geometry is absent. */
+const RECTANGULAR = new Set([
+  'RECTANGLE',
+  'ROUNDED_RECTANGLE',
+  'FRAME',
+  'SYMBOL',
+  'INSTANCE',
+  'SECTION',
+  'GROUP',
+]);
+
+/** Per-corner radii in SVG order: top-left, top-right, bottom-right, bottom-left. */
+function cornerRadii(node: NodeChange): [number, number, number, number] {
+  const uniform = num(node, 'cornerRadius') ?? 0;
+  if (bool(node, 'rectangleCornerRadiiIndependent') !== true) {
+    return [uniform, uniform, uniform, uniform];
+  }
+  return [
+    num(node, 'rectangleTopLeftCornerRadius') ?? uniform,
+    num(node, 'rectangleTopRightCornerRadius') ?? uniform,
+    num(node, 'rectangleBottomRightCornerRadius') ?? uniform,
+    num(node, 'rectangleBottomLeftCornerRadius') ?? uniform,
+  ];
+}
+
+/** A stop that must abort the whole render rather than being isolated to one node. */
+export class RenderBudgetError extends Error {}
 
 /** Where a drawn node ended up, in root-local units — input to the tester's attribution. */
 export interface NodeBox {
@@ -170,7 +198,7 @@ class Exporter {
   private emitNode(t: TreeNode, isRoot: boolean): void {
     this.report.nodesVisited += 1;
     if (this.report.nodesVisited > this.maxVisits) {
-      throw new Error(
+      throw new RenderBudgetError(
         `this render walked more than ${this.maxVisits} nodes — every instance expands into the ` +
           `component it points at, so a page costs far more than its layer count; ` +
           `render a smaller node or raise maxNodes`,
@@ -203,13 +231,22 @@ class Exporter {
       attrs['filter'] = this.effectsFor(t, node);
     }
 
+    // Ground rule 6: one node that throws must not abort the whole render. The writer is
+    // unwound to the depth it had before this group, so the document stays well-formed.
+    const depth = this.out.depth;
     this.out.open('g', attrs);
-    if (isInstance(node)) {
-      this.emitInstance(t, node);
-    } else {
-      this.emitOwnContent(t, node, cls, t.children);
+    try {
+      if (isInstance(node)) {
+        this.emitInstance(t, node);
+      } else {
+        this.emitOwnContent(t, node, cls, t.children);
+      }
+    } catch (err) {
+      if (err instanceof RenderBudgetError) throw err; // a budget stop must abort everything
+      this.report.unsupported('node-failed', t.key);
+    } finally {
+      this.out.unwindTo(depth);
     }
-    this.out.close('g');
 
     if (this.collectBoxes) {
       const box = this.bounds.boundsIn(t, this.root);
@@ -382,7 +419,10 @@ class Exporter {
     paints: readonly KiwiObject[],
   ): void {
     const geometry = objArr(node, field);
-    if (geometry.length === 0) return;
+    if (geometry.length === 0) {
+      this.emitSynthesised(t, node, field, paints);
+      return;
+    }
     const box = Exporter.box(node);
     const paintField = field === 'fillGeometry' ? 'fillPaints' : 'strokePaints';
 
@@ -406,6 +446,49 @@ class Exporter {
         if (!attrs) continue;
         this.out.element('path', { d, 'fill-rule': rule, ...attrs });
       }
+    }
+  }
+
+  /**
+   * §4.14 — this file's own nodes always carry derived geometry, but files written by other
+   * tools may not. A rectangle or ellipse can be rebuilt from `size` and its corner radii;
+   * anything else is reported rather than guessed at.
+   */
+  private emitSynthesised(
+    t: TreeNode,
+    node: NodeChange,
+    field: GeometryField,
+    paints: readonly KiwiObject[],
+  ): void {
+    const visible = paints.filter((p) => bool(p, 'visible') !== false);
+    if (visible.length === 0) return;
+
+    if (field === 'strokeGeometry') {
+      this.report.unsupported('stroke-without-geometry', t.key);
+      return;
+    }
+
+    const type = nodeType(node);
+    const size = nodeSize(node);
+    if (size.w <= 0 || size.h <= 0) return;
+
+    let cmds;
+    if (type === 'ELLIPSE') {
+      cmds = ellipseCommands(size.w, size.h);
+    } else if (RECTANGULAR.has(type)) {
+      cmds = roundedRectCommands(size.w, size.h, cornerRadii(node));
+    } else {
+      this.report.unsupported('vector-without-geometry', t.key);
+      return;
+    }
+    if (cmds.length === 0) return;
+
+    this.report.approximated('geometry:synthesised', t.key);
+    const d = toPathData(cmds);
+    const box = Exporter.box(node);
+    for (const paint of visible) {
+      const attrs = paintAttrs(paint, box, this.env, t.key);
+      if (attrs) this.out.element('path', { d, ...attrs });
     }
   }
 

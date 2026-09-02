@@ -249,3 +249,98 @@ Per-mode values live in `variableDataValues.entries[] = { modeID, variableData }
 `modeID` matches a `variableSetModes[].id` on the collection. Alias values
 (`variableData.value.alias`) may chain through several local variables before reaching a
 concrete one, so resolution needs a depth guard.
+
+---
+
+## 8. Addendum — the render data (measured 2026-09-02, while building `fig_render`)
+
+Everything needed to draw a `.fig` is already in the file: Figma flattens its scene graph at
+save time. These are the encodings that matters, all verified on `figma-input/sample.fig` and
+exercised by `test/golden/render.test.ts`.
+
+### 8.1 Path command blobs
+
+`Path { windingRule, commandsBlob, styleID }` — `commandsBlob` indexes `message.blobs`, whose
+`bytes` hold a flat command list: one opcode byte, then little-endian `float32` arguments.
+
+| opcode | command | floats |
+|---|---|---|
+| 0 | close | 0 |
+| 1 | moveTo | 2 (x y) |
+| 2 | lineTo | 2 (x y) |
+| 3 | quadTo | 4 (cx cy x y) |
+| 4 | cubicTo | 6 (c1x c1y c2x c2y x y) |
+
+Coordinates are **node-local pixels**. Verified on all 7 292 non-empty blobs referenced by
+`fillGeometry`, `strokeGeometry` or glyph outlines: zero failures, one empty blob (a zero-height
+line, meaning "no fill area"). `vectorData.vectorNetworkBlob` is a **different** format and does
+not decode under this grammar — 605 of the 607 referenced network blobs fail immediately, as
+expected.
+
+### 8.2 Stroke geometry is outlined but NOT clipped to its alignment
+
+`strokeGeometry` bakes in weight, caps and joins — but not `strokeAlign`. For `INSIDE` and
+`OUTSIDE` the stored path is a band of **double** the stroke weight straddling the shape edge,
+which Figma clips at render time; only `CENTER` geometry is final. Measured over every node with
+a single uniform-weight stroke, the overshoot beyond the node box is exactly:
+
+| strokeAlign | overshoot / weight | nodes |
+|---|---|---|
+| INSIDE | 1.00 | 8 930 |
+| OUTSIDE | 1.00 | 125 |
+| CENTER | 0.50 | 2 737 |
+
+`StrokeAlign { CENTER=0, INSIDE=1, OUTSIDE=2, OFFSET=3 }`, so an absent field means CENTER.
+A renderer must intersect an INSIDE band with the fill shape and subtract the fill shape from an
+OUTSIDE one; drawing the band raw paints a double-width border that bleeds outside the node.
+
+### 8.3 Glyph outlines: em units, y-up, and a leading `close`
+
+`derivedTextData.glyphs[]` gives every text node its own outlines, so no font file is needed.
+The blob uses the §8.1 grammar but in **em units with y pointing up**, while `Glyph.position` is
+the pen point on the baseline in node-local pixels with kerning already applied (`advance` must
+not be used for placement). A glyph point (gx, gy) lands at:
+
+```
+X = position.x + gx · fontSize
+Y = position.y − gy · fontSize
+```
+
+**4 287 of the 4 288 glyph blobs begin with opcode 0 (close)**, while none of the 4 617 fill or
+stroke blobs do. SVG requires path data to start with a moveto, so that leading command must be
+dropped; emitted verbatim it invalidates the path and a renderer discards it silently.
+
+`decorations[] { rects: Rect[], styleID }` carries underlines and strikethroughs as node-local
+pixel rectangles (`Rect { x, y, w, h }`).
+
+### 8.4 Gradient transforms map the node box *to* gradient space
+
+`Paint.transform` maps the node's normalized box (u = x/width, v = y/height) **to** gradient
+space, where a linear gradient runs from (0, 0.5) to (1, 0.5) and a radial one is centred at
+(0.5, 0.5) with radius 0.5. A renderer therefore needs the **inverse**, composed with
+`scale(width, height)`. Figma's default top-to-bottom gradient is stored as
+`m00≈0 m01=1 m02=0 m10=−1 m11≈0 m12=1`, whose inverse maps (0, 0.5) to the top centre and
+(1, 0.5) to the bottom centre.
+
+The same `transform` field is the image "crop" matrix on an `IMAGE` paint — there is no separate
+`imageTransform` field. `originalImageWidth` / `originalImageHeight` give the intrinsic pixel
+size directly.
+
+### 8.5 Instances are empty; `derivedSymbolData` holds the resolved geometry
+
+**All 38 164 INSTANCE nodes in the sample have zero children.** An instance's content is the
+SYMBOL named by `symbolData.symbolID`, and two record sets on the instance supply the rest:
+
+- `symbolData.symbolOverrides[]` — what the user changed (76 947 records; mostly `size`,
+  `fillPaints`, auto-layout fields, `textData`, `fontSize`, `visible`).
+- `derivedSymbolData[]` — what Figma recomputed as a result (226 886 records carrying resolved
+  `size`, `transform`, `fillGeometry`, `strokeGeometry` and `derivedTextData`).
+
+Both are addressed by `guidPath.guids`, a path of **overrideKeys** (see §7.2) that counts
+**instance-nesting levels, not node depth**: one segment addresses a node anywhere inside this
+instance's own symbol (69 748 of the records), and `[a, b]` addresses overrideKey `b` inside the
+nested instance `a`. 1 232 of the 2 046 symbols contain nested instances.
+
+Consequence for any consumer: an instance's `size` is authoritative and usually differs from its
+symbol's. Instance `2:1340` is 16×16 and points at a 22×22 symbol, so measuring an instance by
+walking its symbol's children gives the wrong answer.
