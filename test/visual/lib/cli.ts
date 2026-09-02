@@ -51,6 +51,8 @@ export interface RunOptions {
   readonly outDir: string;
   readonly only?: string;
   readonly update?: boolean;
+  /** Reuse an existing cache so several fixtures over one file parse it once. */
+  readonly cache?: FileCache;
 }
 
 const skipped = (why: string): LevelResult => ({ pass: true, notes: [], skipped: why });
@@ -159,7 +161,7 @@ export interface FixtureRun {
  * still contributes to the coverage matrix.
  */
 export async function runFixture(fixture: Fixture, opts: RunOptions): Promise<FixtureRun> {
-  const entry = new FileCache(1).get(fixture.file);
+  const entry = (opts.cache ?? new FileCache(1)).get(fixture.file);
   const { frames: resolved, unmatched } = resolveFrames(entry, fixture);
   const expectations = readExpectations(fixture);
   const outDir = path.join(opts.outDir, fixture.name);

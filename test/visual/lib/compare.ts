@@ -94,9 +94,13 @@ export function compare(ours: Pixels, theirs: Pixels, opts: CompareOptions = {})
   }
 
   const diff = Buffer.allocUnsafe(a.width * a.height * 4);
+  // diffMask:true paints ONLY the differing pixels (red, opaque) on a transparent background.
+  // Without it pixelmatch also draws a faded copy of the first image, which makes every
+  // unchanged pixel look like a difference to any mask built from the output.
   const diffPixels = pixelmatch(a.data, b.data, diff, a.width, a.height, {
     threshold: opts.threshold ?? 0.1,
     includeAA: false,
+    diffMask: true,
   });
 
   // Count 8x8 blocks where more than half the pixels differ: a cluster is a real defect,
@@ -109,7 +113,7 @@ export function compare(ours: Pixels, theirs: Pixels, opts: CompareOptions = {})
       for (let y = by; y < Math.min(by + 8, a.height); y++) {
         for (let x = bx; x < Math.min(bx + 8, a.width); x++) {
           total++;
-          if (diff[(y * a.width + x) * 4]! > 0 || diff[(y * a.width + x) * 4 + 1]! > 0) n++;
+          if (diff[(y * a.width + x) * 4 + 3]! > 0) n++;
         }
       }
       if (total > 0 && n * 2 > total) badBlocks++;
@@ -129,11 +133,9 @@ export function compare(ours: Pixels, theirs: Pixels, opts: CompareOptions = {})
   };
 }
 
-/** The diff mask as a boolean grid, for attribution (§9.5). */
+/** The diff image as a boolean grid, for attribution (§9.5). Opaque pixels are the differences. */
 export function diffMask(diffPng: Pixels): boolean[] {
   const mask: boolean[] = new Array(diffPng.width * diffPng.height);
-  for (let i = 0; i < mask.length; i++) {
-    mask[i] = diffPng.data[i * 4]! > 0 || diffPng.data[i * 4 + 1]! > 0;
-  }
+  for (let i = 0; i < mask.length; i++) mask[i] = diffPng.data[i * 4 + 3]! > 0;
   return mask;
 }

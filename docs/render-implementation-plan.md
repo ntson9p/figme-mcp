@@ -1095,6 +1095,25 @@ colour space (§4.10), and the pass thresholds (§9.4).
 levels and the ceiling; `expect.json` is written; a deliberate regression (e.g. comment out
 stroke drawing) makes `npm test` fail on level 3.
 
+**Status (2026-09-02).** The machinery is built and proven; the calibration is not, and cannot
+be from inside this repository — it needs Figma exports, which need a Figma account. What was
+done instead: `test/visual/visual.test.ts` runs the whole oracle path against a **self-oracle**,
+exports produced by our own renderer. That proves matching, rasterizing an external SVG, the
+comparison, the ceiling, attribution and the ratchet all work end to end — levels 3 and 4 run
+and score 0, a defaced oracle is caught, and the difference is attributed to the right layer. It
+proves nothing about fidelity to Figma.
+
+One thing the self-oracle taught us, which is worth keeping: deface only the PNG and level 4
+still passes, because Figma's own SVG no longer matches Figma's own PNG either and the ceiling
+rises with the difference. That is the ceiling doing exactly its job — refusing to blame the
+renderer for something the route cannot reach — and it is now a test in its own right.
+
+**Still open, each waiting on one fixture** (§4.1 of `docs/render-fixtures.md` names them):
+the drop-shadow margin rule (§4.5), the image-crop direction (§4.7.3 — six paints on the
+sample's main page take that branch, all reported as `image-crop`), mask-run termination (F11),
+LUMINANCE colour space (§4.10), and the level-3/4 thresholds (§9.4), which are currently the
+plan's initial guesses.
+
 ---
 
 ## 11. Definition of done
