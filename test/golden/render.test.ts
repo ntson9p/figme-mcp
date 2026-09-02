@@ -119,7 +119,9 @@ describe('R1 — exporter core', { skip }, () => {
     const { svg, bounds, report } = await renderNode(entry, '2:1339', { format: 'svg' });
     assert.equal(svg.match(/<clipPath /g)?.length, 1, 'the frame clips');
     assert.deepEqual(bounds, { x: 0, y: 0, w: 134, h: 40 });
-    assert.equal(report.nodesDrawn, 4, 'frame + 3 visible children; 2:1343 is hidden');
+    // frame + 3 visible children (2:1343 is hidden), and the two INSTANCEs expand into the
+    // symbols they point at — without that expansion this frame would draw almost nothing.
+    assert.equal(report.nodesDrawn, 8);
     assert.ok(report.featuresPresent.includes('stroke-align:INSIDE'));
   });
 
@@ -202,5 +204,73 @@ describe('R1 — rasterized output', { skip: skipRaster }, () => {
     assert.ok(result.width <= 200 && result.height <= 200, `${result.width}x${result.height}`);
     assert.equal(pixels.width, result.width);
     assert.ok(result.report.scale < 4);
+  });
+});
+
+describe('R1.5 — instances (F17)', { skip }, () => {
+  it('every INSTANCE in the file is childless and resolves to a symbol that is present', () => {
+    let instances = 0;
+    let withChildren = 0;
+    let resolvable = 0;
+    for (const t of entry.index.tree.ordered) {
+      if (t.node['type'] !== 'INSTANCE') continue;
+      instances++;
+      if (t.children.length) withChildren++;
+      const id = t.node['symbolData'] as { symbolID?: { sessionID: number; localID: number } };
+      const key = id?.symbolID ? `${id.symbolID.sessionID}:${id.symbolID.localID}` : undefined;
+      if (key && entry.index.node(key)) resolvable++;
+    }
+    assert.equal(instances, 38_164);
+    assert.equal(withChildren, 0, 'instances never carry their own children');
+    assert.equal(resolvable, 38_164, 'and every one points at a symbol in this file');
+  });
+
+  it('2:1340 draws the symbol it points at, at the instance size', async () => {
+    const { bounds, report, svg } = await renderNode(entry, '2:1340', { format: 'svg' });
+    // The instance is 16x16; the symbol it points at is 22x22. The derived geometry is already
+    // resized, so the render must be the instance's size, not the symbol's.
+    assert.deepEqual(bounds, { x: 0, y: 0, w: 16, h: 16 });
+    assert.equal(report.nodesDrawn, 2, 'the instance plus the symbol\'s boolean shape');
+    assert.equal(svg.match(/<path /g)?.length, 1);
+    assert.ok(report.featuresPresent.includes('node-type:BOOLEAN_OPERATION'));
+  });
+
+  it('derived geometry wins over the symbol\'s own', async () => {
+    const { svg } = await renderNode(entry, '2:1340', { format: 'svg' });
+    // Symbol 2:1306's shape spans 22 units; the derived record for this instance spans 16.
+    const coords = [...svg.matchAll(/[ML](\d+(?:\.\d+)?),/g)].map((m) => Number(m[1]));
+    assert.ok(Math.max(...coords) <= 16.01, `path stays inside 16 units, got ${Math.max(...coords)}`);
+  });
+
+  it('a nested instance resolves through its own symbol', async () => {
+    const { report } = await renderNode(entry, '2:1401', { format: 'svg' });
+    assert.ok(report.nodesDrawn > 3, `expanded to ${report.nodesDrawn} nodes`);
+    assert.ok(report.featuresPresent.includes('node-type:INSTANCE'));
+    assert.deepEqual(report.unsupported.filter((u) => u.feature.startsWith('instance-')), []);
+  });
+
+  it('overrides applied by the instance reach the symbol\'s descendants', () => {
+    // 2:1340 overrides fillPaints on the symbol root (to none) and on the shape (to #333333).
+    const overrides = (entry.index.node('2:1340')!.node['symbolData'] as { symbolOverrides?: unknown[] })
+      .symbolOverrides!;
+    assert.equal(overrides.length, 2);
+  });
+});
+
+describe('R1.5 — instances rasterized', { skip: skipRaster }, () => {
+  it('the settings icon actually has ink where the symbol draws it', async () => {
+    const { pixels } = await png('2:1340', { scale: 4 });
+    assert.equal(pixels.width, 64);
+    const ink = inkBounds(pixels)!;
+    assert.ok(ink.x1 - ink.x0 > 40, `the gear spans most of the box, got ${JSON.stringify(ink)}`);
+    assert.ok(ink.y1 - ink.y0 > 40);
+  });
+
+  it('an instance with a border and a nested icon draws both', async () => {
+    const { result, pixels } = await png('2:1401', { scale: 1 });
+    assert.equal(result.width, 219);
+    assert.equal(result.height, 40);
+    assert.ok(pixelAt(pixels, 0, 20)[3]! > 200, 'the left border is drawn');
+    assert.ok(pixelAt(pixels, 20, 20)[3]! > 0, 'and the nested gear icon has ink');
   });
 });

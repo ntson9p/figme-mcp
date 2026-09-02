@@ -182,6 +182,32 @@ and OUTSIDE strokes to its complement, and `contentBounds` must not count the ra
 otherwise the 134×40 frame `2:1339` exports as 134×41 and every bordered frame gains a
 half-stroke of bleed.
 
+**F17 — Instances are empty; the symbol is the content** (measured during R1; the plan's §4.4
+did not cover this and an exporter without it renders almost nothing). **All 38 164 INSTANCE
+nodes in the sample have zero children**, and all 38 164 resolve to a SYMBOL that is present in
+the file. On a real page — `0:1` — INSTANCE is the most common type by far: 7 104 of 14 912
+nodes. Two record sets on the instance supply the rest, both addressed by `guidPath.guids`,
+a path of **overrideKeys** (not guids, not node paths):
+
+* `symbolData.symbolOverrides` — what the user changed. 76 947 records; the commonest fields are
+  `size` (34 505), `fillPaints` (26 472), auto-layout fields, `textData`, `fontSize`, `visible`.
+* `derivedSymbolData` — what Figma recomputed as a result: 226 886 records carrying resolved
+  `size` (154 856), `fillGeometry` (118 219), `strokeGeometry` (41 591), `derivedTextData`
+  (32 079) and `transform` (50 295). Present on 37 878 of the instances.
+
+`guidPath` counts **instance-nesting levels, not node depth**: a one-segment path (69 748 of
+76 947) addresses a node anywhere inside this instance's own symbol, and `[a, b]` addresses the
+node with overrideKey `b` inside the nested instance with overrideKey `a`. 1 232 of 2 046
+symbols contain nested instances, so the nesting case is normal, not exotic. The symbol's own
+root carries an overrideKey too, and the record at that path is the instance's own appearance.
+
+Consequences, implemented in §4.4: an INSTANCE draws the symbol's children with
+`mergeNode(symbolNode, record)` applied per descendant (derived wins over user overrides, and an
+enclosing instance wins over a nested one); a recursion guard is needed; and — critically —
+**`contentBounds` of an INSTANCE must NOT descend into the symbol**, because the symbol's own
+children are the symbol's size, not the instance's. Instance `2:1340` is 16×16 and points at a
+22×22 symbol; descending renders it at 22×22 with the icon in the corner.
+
 **F15 — Existing APIs to reuse** (do not duplicate): `FileCache.get(file): CacheEntry
 { fig, index }`, `FileIndex.node(guid)`, `FileIndex.subtreeRange(root)`, `TreeNode
 { key, node, children, parent }`, accessors `str/num/bool/obj/arr/objArr/bytes/hex` in
@@ -1012,6 +1038,15 @@ the rasterizer is already in `optionalDependencies` and installed — nothing to
 **Accept**: R1 golden rows; render `2:1339` and `2:1558` and **look** at the PNGs (Appendix A);
 the server still starts and the 11 existing tools are unchanged.
 
+### R1.5 — Instances
+`instance.ts` (override-record maps, `mergeNode`, `descend`, `instanceShapeNode`) and the
+INSTANCE branch of the traversal, per F17. Added after R1 because F17 was only discovered once
+real frames were rendered, and placed **before** text because instance text arrives as
+`derivedSymbolData[].derivedTextData` and would otherwise have to be done twice.
+**Accept**: `2:1340` renders the gear at the instance's 16×16, not the symbol's 22×22; `2:1401`
+renders a bordered pill containing the nested icon; no `instance-unresolved` or
+`instance-recursive` entries on the sample.
+
 ### R2 — Text
 `text.ts` with glyph outlines, style colours, decorations, emoji reporting.
 **Accept**: R2 golden rows; view `2:1336`, `2:7099`, `2:6971` (underlined Japanese text).
@@ -1240,6 +1275,9 @@ fixtures; check each file's licence before committing it.
 18. **Stroke alignment still needs a clip** (F16): `strokeGeometry` for INSIDE/OUTSIDE is a
     DOUBLE-width band straddling the edge. Drawn raw it paints a double-width border that
     bleeds outside the node, and it inflates the render bounds by the stroke weight.
+19. **An INSTANCE has no children** (F17): its content is the SYMBOL it points at. Never let
+    contentBounds descend into that symbol — the symbol is the symbol's size, not the
+    instance's, and the render comes out too large with the content in one corner.
 
 ---
 
@@ -1250,7 +1288,8 @@ fixtures; check each file's licence before committing it.
 `image-rotation` · `image-filters` · `gradient-singular` · `emoji` · `glyph-rotation` ·
 `text-without-outlines` · `text-stroke` · `text-decoration` · `stroke-dashed` · `stroke-align:<ALIGN>` ·
 `stroke-without-geometry` · `vector-without-geometry` · `geometry:corrupt` ·
-`geometry:synthesised` · `mask-hidden` · `oversize`.
+`geometry:synthesised` · `mask-hidden` · `oversize` · `instance-unresolved` ·
+`instance-recursive`.
 
 `featuresPresent` uses the same keys for what exists in a subtree (e.g. `paint:SOLID`,
 `effect:DROP_SHADOW`, `blend:MULTIPLY`, `mask:OUTLINE`, `image-mode:FILL`,

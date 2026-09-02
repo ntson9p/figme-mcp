@@ -10,6 +10,7 @@
  * clips its own output — Appendix E, R21).
  */
 import type { CacheEntry } from '../cache.js';
+import type { NodeChange } from '../fig/parse.js';
 import type { TreeNode } from '../model/tree.js';
 import { bool, bytes, num, obj, objArr, str } from '../model/access.js';
 import { expandBox, fromFigma, transformBox, unionBox, type Box } from './matrix.js';
@@ -18,6 +19,7 @@ import {
   clipsChildren,
   hasFillGeometry,
   isBooleanOperation,
+  isInstance,
   isVisible,
   nodeSize,
   nodeType,
@@ -47,9 +49,9 @@ export class BoundsCache {
     return bytes(this.entry.fig.blobs[index], 'bytes');
   }
 
-  private fieldBounds(t: TreeNode, field: 'fillGeometry' | 'strokeGeometry'): Box | undefined {
+  private fieldBounds(node: NodeChange, field: 'fillGeometry' | 'strokeGeometry'): Box | undefined {
     let box: Box | undefined;
-    for (const path of objArr(t.node, field)) {
+    for (const path of objArr(node, field)) {
       const raw = this.blob(num(path, 'commandsBlob'));
       if (!raw || raw.length === 0) continue;
       try {
@@ -65,15 +67,24 @@ export class BoundsCache {
    * Union of the fill and stroke path bounds, in node-local coordinates.
    *
    * An INSIDE stroke's stored geometry is a double-width band straddling the edge, which the
-   * exporter clips to the fill shape (§4.4). Counting it raw would inflate the render by the
-   * stroke weight on every side — the 134x40 frame 2:1339 would export as 134x41. So when the
-   * node has a fill shape to clip against, the INSIDE band contributes nothing beyond it.
+   * exporter clips to the fill shape (F16). Counting it raw would inflate the render by the
+   * stroke weight on every side — the 134x40 frame 2:1339 would export as 134x41.
    */
-  private geometryBounds(t: TreeNode): Box | undefined {
-    const fill = this.fieldBounds(t, 'fillGeometry');
-    const align = strokeAlign(t);
-    if (align === 'INSIDE' && hasFillGeometry(t)) return fill;
-    return unionBox(fill, this.fieldBounds(t, 'strokeGeometry'));
+  private geometryBounds(node: NodeChange): Box | undefined {
+    const fill = this.fieldBounds(node, 'fillGeometry');
+    if (strokeAlign(node) === 'INSIDE' && hasFillGeometry(node)) return fill;
+    return unionBox(fill, this.fieldBounds(node, 'strokeGeometry'));
+  }
+
+  private childrenBounds(children: readonly TreeNode[]): Box | undefined {
+    let box: Box | undefined;
+    for (const child of children) {
+      if (!isVisible(child.node)) continue;
+      const childBox = this.renderBounds(child);
+      if (!childBox) continue;
+      box = unionBox(box, transformBox(fromFigma(obj(child.node, 'transform')), childBox));
+    }
+    return box;
   }
 
   contentBounds(t: TreeNode): Box | undefined {
@@ -82,21 +93,24 @@ export class BoundsCache {
     // Guard against a cyclic parent chain in a damaged file.
     this.content.set(t, null);
 
+    const node = t.node;
     let box: Box | undefined;
-    if (nodeType(t) !== 'CANVAS') {
-      const size = nodeSize(t);
+    if (nodeType(node) !== 'CANVAS') {
+      const size = nodeSize(node);
       box = { x: 0, y: 0, w: size.w, h: size.h };
     }
-    box = unionBox(box, this.geometryBounds(t));
+    box = unionBox(box, this.geometryBounds(node));
 
-    // A clipping container bounds its own children; a boolean's children are operands (F3).
-    if (!clipsChildren(t) && !isBooleanOperation(t)) {
-      for (const child of t.children) {
-        if (!isVisible(child)) continue;
-        const childBox = this.renderBounds(child);
-        if (!childBox) continue;
-        box = unionBox(box, transformBox(fromFigma(obj(child.node, 'transform')), childBox));
-      }
+    if (isInstance(node)) {
+      // An instance has no children of its own (F17): its content is the symbol's, resized by
+      // this instance's derived geometry. The symbol's OWN children are the wrong size — the
+      // 16x16 instance 2:1340 points at a 22x22 symbol — so descending would inflate the render.
+      // `size` is present on every instance in the sample and is authoritative; the cost is
+      // that content deliberately overflowing a non-clipping instance can be cropped.
+      // (nothing to add: the box above already is the instance)
+    } else if (!clipsChildren(node) && !isBooleanOperation(node)) {
+      // A clipping container bounds its own children; a boolean's children are operands (F3).
+      box = unionBox(box, this.childrenBounds(t.children));
     }
 
     this.content.set(t, box ?? null);
@@ -131,7 +145,12 @@ export class BoundsCache {
       // INNER_SHADOW and BACKGROUND_BLUR stay inside the shape and add nothing.
     }
     if (left === 0 && top === 0 && right === 0 && bottom === 0) return NO_MARGIN;
-    return { left: Math.max(0, left), top: Math.max(0, top), right: Math.max(0, right), bottom: Math.max(0, bottom) };
+    return {
+      left: Math.max(0, left),
+      top: Math.max(0, top),
+      right: Math.max(0, right),
+      bottom: Math.max(0, bottom),
+    };
   }
 
   renderBounds(t: TreeNode): Box | undefined {
@@ -140,17 +159,14 @@ export class BoundsCache {
     this.render.set(t, null);
 
     const content = this.contentBounds(t);
-    if (!content) {
-      this.render.set(t, null);
-      return undefined;
-    }
+    if (!content) return undefined;
     const m = this.effectMargins(t);
     const box = m === NO_MARGIN ? content : expandBox(content, m.left, m.top, m.right, m.bottom);
     this.render.set(t, box);
     return box;
   }
 
-  /** Bounds of `t` expressed in the coordinate space of `ancestor` (exclusive of its transform). */
+  /** Bounds of `t` expressed in the coordinate space of `ancestor` (excluding its transform). */
   boundsIn(t: TreeNode, ancestor: TreeNode): Box | undefined {
     let box = this.renderBounds(t);
     if (!box) return undefined;

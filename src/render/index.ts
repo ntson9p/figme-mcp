@@ -57,7 +57,7 @@ function resolveRoot(entry: CacheEntry, guid: string): TreeNode {
         '(guids look like "2:1339"; use fig_find or fig_tree to discover them)',
     );
   }
-  if (nodeType(t) === 'DOCUMENT') {
+  if (nodeType(t.node) === 'DOCUMENT') {
     throw new Error('cannot render the DOCUMENT node — render a page or a node inside one');
   }
   return t;
@@ -128,7 +128,7 @@ export async function renderNode(
   }
 
   const report = exported.report.finish({
-    root: { guid: root.key, name: str(root.node, 'name'), type: nodeType(root) },
+    root: { guid: root.key, name: str(root.node, 'name'), type: nodeType(root.node) },
     bounds,
     width,
     height,

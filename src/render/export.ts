@@ -2,28 +2,39 @@
  * The exporter (plan §4.4): a node subtree → one SVG document.
  *
  * This is the project-specific part. Everything it draws comes from geometry Figma already
- * derived at save time (F3, F5): outlined strokes, combined booleans and per-glyph outlines, so
- * no vector networks, font files or boolean solvers are involved.
+ * derived at save time (F3, F5, F17): outlined strokes, combined booleans, per-glyph outlines
+ * and per-instance resolved geometry — so no vector networks, font files, boolean solvers or
+ * auto-layout engine are involved.
  *
  * Rendering degrades, it never crashes (ground rule 6): a node that cannot be drawn is skipped
  * and recorded in the report.
  */
 import type { CacheEntry } from '../cache.js';
 import type { KiwiObject } from '../fig/kiwi.js';
+import type { NodeChange } from '../fig/parse.js';
 import type { TreeNode } from '../model/tree.js';
 import { bytes, num, obj, objArr, str } from '../model/access.js';
 import { BoundsCache } from './bounds.js';
+import {
+  descend,
+  instanceShapeNode,
+  mergeNode,
+  overrideKeyOf,
+  resolveInstance,
+  type OverrideRecords,
+} from './instance.js';
 import { fromFigma, isIdentity, type Box } from './matrix.js';
 import {
   classify,
   clipsChildren,
+  hasFillGeometry,
   isBooleanOperation,
+  isInstance,
   isVisible,
   nodeOpacity,
   nodeSize,
   nodeType,
   strokeAlign,
-  hasFillGeometry,
 } from './node.js';
 import { decodeCommands, toPathData } from './path.js';
 import { paintAttrs, paintsForStyle, type PaintEnv } from './paint.js';
@@ -34,6 +45,8 @@ export const DEFAULT_MAX_NODES = 20_000;
 export const HARD_MAX_NODES = 60_000;
 /** A render whose SVG exceeds this is refused rather than handed to the rasterizer. */
 export const MAX_SVG_BYTES = 64 * 1024 * 1024;
+/** Instances nested deeper than this are almost certainly a cycle in a damaged file. */
+const MAX_INSTANCE_DEPTH = 24;
 
 /** Where a drawn node ended up, in root-local units — input to the tester's attribution. */
 export interface NodeBox {
@@ -71,6 +84,12 @@ class Exporter {
   private readonly boxes: NodeBox[] = [];
   /** OUTLINE masks re-render their content with every paint forced to opaque white (§4.10). */
   private whiteout = false;
+  /** Override records of the innermost enclosing INSTANCE, keyed by overrideKey path (F17). */
+  private frame: OverrideRecords | undefined;
+  /** Symbols currently being expanded, so a self-referential component cannot loop. */
+  private readonly activeSymbols = new Set<string>();
+  /** Distinguishes ids for the same symbol node drawn under different instances. */
+  private defScope = '';
 
   constructor(entry: CacheEntry, root: TreeNode, opts: ExportOptions) {
     this.entry = entry;
@@ -90,9 +109,22 @@ class Exporter {
     return { report: this.report, whiteout: this.whiteout };
   }
 
-  private nodeBox(t: TreeNode): Box {
-    const size = nodeSize(t);
+  private static box(node: NodeChange): Box {
+    const size = nodeSize(node);
     return { x: 0, y: 0, w: size.w, h: size.h };
+  }
+
+  /** The node as this instance sees it: the tree node merged with the active overrides (F17). */
+  private effective(t: TreeNode): NodeChange {
+    if (!this.frame) return t.node;
+    const key = overrideKeyOf(t);
+    if (!key) return t.node;
+    return mergeNode(t.node, this.frame.get(key));
+  }
+
+  /** Def keys must not collide between two instances of the same symbol with different fills. */
+  private defKey(kind: string, t: TreeNode): string {
+    return `${kind}:${this.defScope}${t.key}`;
   }
 
   run(): ExportResult {
@@ -122,12 +154,13 @@ class Exporter {
         `subtree exceeds maxNodes (${this.maxNodes}); render a smaller node or raise maxNodes`,
       );
     }
-    if (!isVisible(t)) return;
-    const opacity = nodeOpacity(t);
+    const node = this.effective(t);
+    if (!isVisible(node)) return;
+    const opacity = nodeOpacity(node);
     if (opacity <= 0) return;
 
-    const type = nodeType(t);
-    const cls = classify(t, isRoot);
+    const type = nodeType(node);
+    const cls = classify(node, isRoot);
     if (cls === 'skip') {
       this.report.unsupported(feat.nodeType(type), t.key);
       return;
@@ -138,50 +171,92 @@ class Exporter {
     const attrs: Attrs = {};
     if (!isRoot) {
       // The root is drawn in its own local space; the viewBox carries its position (Pitfall 4).
-      const m = fromFigma(obj(t.node, 'transform'));
+      const m = fromFigma(obj(node, 'transform'));
       if (!isIdentity(m)) attrs['transform'] = toAttr(m);
     }
     if (opacity < 1 && !this.whiteout) attrs['opacity'] = opacity;
 
     this.out.open('g', attrs);
-
-    // Draw order inside a node (F12): own fills, then children, then own strokes.
-    if (cls === 'text') {
-      this.emitText(t);
+    if (isInstance(node)) {
+      this.emitInstance(t, node);
     } else {
-      this.emitPaths(t, 'fillGeometry', objArr(t.node, 'fillPaints'));
+      this.emitOwnContent(t, node, cls, t.children);
     }
-
-    if (cls === 'container' && !isBooleanOperation(t)) {
-      const clipId = this.clipPathFor(t);
-      if (clipId) this.out.open('g', { 'clip-path': `url(#${clipId})` });
-      this.emitChildren(t);
-      if (clipId) this.out.close('g');
-    }
-
-    if (cls !== 'text') {
-      this.emitStrokes(t);
-    }
-
     this.out.close('g');
 
     if (this.collectBoxes) {
       const box = this.bounds.boundsIn(t, this.root);
-      if (box) {
-        this.boxes.push({ guid: t.key, type, name: str(t.node, 'name'), box });
-      }
+      if (box) this.boxes.push({ guid: t.key, type, name: str(node, 'name'), box });
     }
   }
 
-  private emitChildren(t: TreeNode): void {
-    for (const child of t.children) this.emitNode(child, false);
+  /** Draw order inside a node (F12): own fills, then children, then own strokes. */
+  private emitOwnContent(
+    t: TreeNode,
+    node: NodeChange,
+    cls: 'container' | 'shape' | 'text',
+    children: readonly TreeNode[],
+  ): void {
+    if (cls === 'text') {
+      this.emitText(t, node);
+    } else {
+      this.emitPaths(t, node, 'fillGeometry', objArr(node, 'fillPaints'));
+    }
+
+    if (cls === 'container' && !isBooleanOperation(node)) {
+      const clipId = clipsChildren(node) ? this.fillShapeClip(t, node) : undefined;
+      if (clipId) this.out.open('g', { 'clip-path': `url(#${clipId})` });
+      for (const child of children) this.emitNode(child, false);
+      if (clipId) this.out.close('g');
+    }
+
+    if (cls !== 'text') this.emitStrokes(t, node);
+  }
+
+  /**
+   * F17 — an INSTANCE has no children of its own; its content is the SYMBOL it points at, with
+   * this instance's overrides and Figma's per-instance derived geometry applied.
+   */
+  private emitInstance(t: TreeNode, node: NodeChange): void {
+    const resolved = resolveInstance(this.entry.index, t, descend(this.frame ?? new Map(), overrideKeyOf(t)));
+    if (!resolved) {
+      // No symbol in this file (a library component that was never published locally).
+      this.report.unsupported('instance-unresolved', t.key);
+      this.emitOwnContent(t, node, 'container', []);
+      return;
+    }
+    if (this.activeSymbols.has(resolved.symbol.key) || this.activeSymbols.size >= MAX_INSTANCE_DEPTH) {
+      this.report.unsupported('instance-recursive', t.key);
+      return;
+    }
+
+    const savedFrame = this.frame;
+    const savedScope = this.defScope;
+    this.frame = resolved.records;
+    this.defScope = `${this.defScope}${t.key}~`;
+    this.activeSymbols.add(resolved.symbol.key);
+    try {
+      // The instance's own box: the symbol root with its override applied, overlaid by whatever
+      // the instance itself already carries resolved.
+      const shape = instanceShapeNode(t, resolved.symbol, resolved.records);
+      this.emitOwnContent(t, shape, 'container', resolved.symbol.children);
+    } finally {
+      this.activeSymbols.delete(resolved.symbol.key);
+      this.frame = savedFrame;
+      this.defScope = savedScope;
+    }
   }
 
   /** One `<path>` per (geometry, visible paint) pair. */
-  private emitPaths(t: TreeNode, field: GeometryField, paints: readonly KiwiObject[]): void {
-    const geometry = objArr(t.node, field);
+  private emitPaths(
+    t: TreeNode,
+    node: NodeChange,
+    field: GeometryField,
+    paints: readonly KiwiObject[],
+  ): void {
+    const geometry = objArr(node, field);
     if (geometry.length === 0) return;
-    const box = this.nodeBox(t);
+    const box = Exporter.box(node);
     const paintField = field === 'fillGeometry' ? 'fillPaints' : 'strokePaints';
 
     for (const path of geometry) {
@@ -198,9 +273,8 @@ class Exporter {
       }
       // SVG's default fill-rule is nonzero, so it is only written when the winding is ODD.
       const rule = str(path, 'windingRule') === 'ODD' ? 'evenodd' : undefined;
-      const styled = paintsForStyle(t, num(path, 'styleID'), paintField);
-      const list = styled ?? paints;
-      for (const paint of list) {
+      const styled = paintsForStyle(node, num(path, 'styleID'), paintField);
+      for (const paint of styled ?? paints) {
         const attrs = paintAttrs(paint, box, this.env, t.key);
         if (!attrs) continue;
         this.out.element('path', { d, 'fill-rule': rule, ...attrs });
@@ -209,58 +283,43 @@ class Exporter {
   }
 
   /**
-   * Strokes, with the alignment clip Figma applies at render time.
+   * Strokes, with the alignment clip Figma applies at render time (F16).
    *
    * `strokeGeometry` for an INSIDE or OUTSIDE stroke is a band of DOUBLE the weight straddling
    * the shape edge; Figma keeps the half that falls inside (INSIDE) or outside (OUTSIDE) the
    * fill shape. Drawing it unclipped paints a double-width border that bleeds past the node —
    * on this sample that would be wrong on 9 055 nodes. CENTER geometry is already final.
    */
-  private emitStrokes(t: TreeNode): void {
-    const geometry = objArr(t.node, 'strokeGeometry');
-    if (geometry.length === 0) return;
-    const paints = objArr(t.node, 'strokePaints');
+  private emitStrokes(t: TreeNode, node: NodeChange): void {
+    if (objArr(node, 'strokeGeometry').length === 0) return;
 
-    const align = strokeAlign(t);
+    const align = strokeAlign(node);
+    this.report.seen(feat.strokeAlign(align));
+    const dashes = node['dashPattern'];
+    if (Array.isArray(dashes) && dashes.length) this.report.seen('stroke-dashed');
+
     let wrapped = false;
-    if (align === 'INSIDE' && hasFillGeometry(t)) {
-      this.out.open('g', { 'clip-path': `url(#${this.fillShapeClip(t)})` });
+    if (align === 'INSIDE' && hasFillGeometry(node)) {
+      this.out.open('g', { 'clip-path': `url(#${this.fillShapeClip(t, node)})` });
       wrapped = true;
-    } else if (align === 'OUTSIDE' && hasFillGeometry(t)) {
-      this.out.open('g', { mask: `url(#${this.outsideStrokeMask(t)})` });
+    } else if (align === 'OUTSIDE' && hasFillGeometry(node)) {
+      this.out.open('g', { mask: `url(#${this.outsideStrokeMask(t, node)})` });
       wrapped = true;
     } else if (align === 'OFFSET') {
       // Not present in the sample; drawn as CENTER until a fixture pins the offset down.
       this.report.approximated(feat.strokeAlign(align), t.key);
     }
-    this.report.seen(feat.strokeAlign(align));
-    if (str(t.node, 'dashPattern') !== undefined || (t.node['dashPattern'] as unknown[] | undefined)?.length) {
-      this.report.seen('stroke-dashed');
-    }
 
-    this.emitPaths(t, 'strokeGeometry', paints);
+    this.emitPaths(t, node, 'strokeGeometry', objArr(node, 'strokePaints'));
     if (wrapped) this.out.close('g');
   }
 
   /** The node's fill shape as a `<clipPath>`; shared by frame clipping and INSIDE strokes. */
-  private fillShapeClip(t: TreeNode): string {
-    return this.out.def(`clip:${t.key}`, (id) => {
-      const parts: string[] = [];
-      for (const path of objArr(t.node, 'fillGeometry')) {
-        const raw = this.blob(num(path, 'commandsBlob'));
-        if (!raw || raw.length === 0) continue;
-        try {
-          const cmds = decodeCommands(raw);
-          if (cmds.length === 0) continue;
-          // clip-rule, NOT fill-rule: resvg ignores fill-rule inside a clipPath (Appendix E R11).
-          const rule = str(path, 'windingRule') === 'ODD' ? ' clip-rule="evenodd"' : '';
-          parts.push(`<path d="${toPathData(cmds)}"${rule}/>`);
-        } catch {
-          // reported by emitPaths for the same node
-        }
-      }
+  private fillShapeClip(t: TreeNode, node: NodeChange): string {
+    return this.out.def(this.defKey('clip', t), (id) => {
+      const parts = this.shapePaths(node, 'clip');
       if (parts.length === 0) {
-        const size = nodeSize(t);
+        const size = nodeSize(node);
         parts.push(`<rect x="0" y="0" width="${fmt(size.w)}" height="${fmt(size.h)}"/>`);
       }
       return `<clipPath id="${id}" clipPathUnits="userSpaceOnUse">${parts.join('')}</clipPath>`;
@@ -272,25 +331,14 @@ class Exporter {
    * black over the shape. A mask rather than an even-odd clip path, because combining an
    * arbitrary winding rule with an enclosing rectangle is not reliably the complement.
    */
-  private outsideStrokeMask(t: TreeNode): string {
-    return this.out.def(`outside:${t.key}`, (id) => {
-      const region = this.bounds.contentBounds(t) ?? this.nodeBox(t);
+  private outsideStrokeMask(t: TreeNode, node: NodeChange): string {
+    return this.out.def(this.defKey('outside', t), (id) => {
+      const region = this.bounds.contentBounds(t) ?? Exporter.box(node);
       const parts = [
         `<rect x="${fmt(region.x)}" y="${fmt(region.y)}" width="${fmt(region.w)}" ` +
           `height="${fmt(region.h)}" fill="#ffffff"/>`,
+        ...this.shapePaths(node, 'black'),
       ];
-      for (const path of objArr(t.node, 'fillGeometry')) {
-        const raw = this.blob(num(path, 'commandsBlob'));
-        if (!raw || raw.length === 0) continue;
-        try {
-          const cmds = decodeCommands(raw);
-          if (cmds.length === 0) continue;
-          const rule = str(path, 'windingRule') === 'ODD' ? ' fill-rule="evenodd"' : '';
-          parts.push(`<path d="${toPathData(cmds)}" fill="#000000"${rule}/>`);
-        } catch {
-          // reported by emitPaths for the same node
-        }
-      }
       return (
         `<mask id="${id}" maskUnits="userSpaceOnUse" x="${fmt(region.x)}" y="${fmt(region.y)}" ` +
         `width="${fmt(region.w)}" height="${fmt(region.h)}">${parts.join('')}</mask>`
@@ -298,14 +346,34 @@ class Exporter {
     });
   }
 
-  /** §4.6. The clip shape is the container's own fillGeometry, which includes corner radius. */
-  private clipPathFor(t: TreeNode): string | undefined {
-    if (!clipsChildren(t)) return undefined;
-    return this.fillShapeClip(t);
+  /**
+   * The fill geometry as `<path>` markup. `clip` emits `clip-rule`, which is what a `<clipPath>`
+   * child honours — resvg silently ignores `fill-rule` there (Appendix E, R11).
+   */
+  private shapePaths(node: NodeChange, mode: 'clip' | 'black'): string[] {
+    const parts: string[] = [];
+    for (const path of objArr(node, 'fillGeometry')) {
+      const raw = this.blob(num(path, 'commandsBlob'));
+      if (!raw || raw.length === 0) continue;
+      try {
+        const cmds = decodeCommands(raw);
+        if (cmds.length === 0) continue;
+        const odd = str(path, 'windingRule') === 'ODD';
+        const d = toPathData(cmds);
+        parts.push(
+          mode === 'clip'
+            ? `<path d="${d}"${odd ? ' clip-rule="evenodd"' : ''}/>`
+            : `<path d="${d}" fill="#000000"${odd ? ' fill-rule="evenodd"' : ''}/>`,
+        );
+      } catch {
+        // reported by emitPaths for the same node
+      }
+    }
+    return parts;
   }
 
   /** Implemented in R2. */
-  private emitText(t: TreeNode): void {
+  private emitText(t: TreeNode, _node: NodeChange): void {
     this.report.unsupported('text-without-outlines', t.key);
   }
 }

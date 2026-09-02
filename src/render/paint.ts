@@ -6,7 +6,7 @@
  * `box` is the node-local box `{0,0,width,height}`, which is also the "normalized box" of F7.
  */
 import type { KiwiObject } from '../fig/kiwi.js';
-import type { TreeNode } from '../model/tree.js';
+import type { NodeChange } from '../fig/parse.js';
 import { bool, num, obj, objArr, str } from '../model/access.js';
 import { alphaOf, hexOf } from './color.js';
 import type { Box } from './matrix.js';
@@ -34,14 +34,14 @@ function opacityAttr(alpha: number): Attrs {
  * only the fields that differ from the node's own. Returns undefined when there is no override.
  */
 export function paintsForStyle(
-  t: TreeNode,
+  node: NodeChange,
   styleID: number | undefined,
   field: 'fillPaints' | 'strokePaints',
 ): KiwiObject[] | undefined {
   if (!styleID) return undefined;
   const tables = [
-    objArr(obj(t.node, 'vectorData'), 'styleOverrideTable'),
-    objArr(obj(t.node, 'textData'), 'styleOverrideTable'),
+    objArr(obj(node, 'vectorData'), 'styleOverrideTable'),
+    objArr(obj(node, 'textData'), 'styleOverrideTable'),
   ];
   for (const table of tables) {
     for (const override of table) {
