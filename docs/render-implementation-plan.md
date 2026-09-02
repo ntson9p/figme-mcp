@@ -101,12 +101,17 @@ lines and means "no fill area". Golden: blob #390 (node `2:1558`, 146 bytes) dec
 (values rounded to 1 decimal; first 64 bytes:
 `0100000000ffffff3f0400000000ed3a653ff03a653f0000000000000040000000000200008041000000000429d688410000000000009041f13a653f00009041`).
 
-**F5 — Text.** `derivedTextData` exists on 16 854 of 16 894 TEXT nodes (the 40 without are
-hidden text-style definition nodes named "Rag 123"). Fields:
+**F5 — Text.** `derivedTextData` exists on 16 854 of 16 894 TEXT nodes (39 have no
+`derivedTextData` at all and 1 has zero glyphs; all are text-style definition nodes named after
+their font, e.g. "Meiryo/Regular/16"). Fields:
 `layoutSize {x,y}`, `baselines[]`, `glyphs[]`, `decorations[] { rects: Rect[], styleID }`.
 `Glyph { commandsBlob, position {x,y}, styleID, fontSize, firstCharacter, advance,
 emojiCodePoints[], emojiImageSet, rotation }`. The outline blob uses the **same encoding as F4
-in em units, y-up** (verified: the flat base bar of the digit "2" lies at y = 0 spanning the
+in em units, y-up**, and **begins with a redundant `close`**: 4 287 of the 4 288 glyph blobs
+start with opcode 0, while none of the 4 617 fill/stroke blobs do. SVG requires path data to
+begin with a moveto, so `toPathData` drops any command before the first `M` — emitted verbatim
+that leading `Z` invalidates the path and resvg discards it in silence, so **every piece of text
+renders blank with no error anywhere**. (verified: the flat base bar of the digit "2" lies at y = 0 spanning the
 full glyph width; its top arc is at y = 0.75). `position` is the pen position on the baseline in
 **node-local pixels**, kerning already applied (use it directly; ignore `advance`). Pixel
 transform of a glyph point (gx, gy): `X = position.x + gx·fontSize`, `Y = position.y − gy·fontSize`.
@@ -1278,6 +1283,8 @@ fixtures; check each file's licence before committing it.
 19. **An INSTANCE has no children** (F17): its content is the SYMBOL it points at. Never let
     contentBounds descend into that symbol — the symbol is the symbol's size, not the
     instance's, and the render comes out too large with the content in one corner.
+20. **Glyph blobs start with a close command** (F5): drop every command before the first
+    moveto or the path is invalid and the rasterizer drops it without a word.
 
 ---
 

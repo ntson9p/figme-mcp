@@ -45,10 +45,22 @@ export function decodeCommands(raw: Uint8Array): PathCommand[] {
   return out;
 }
 
-/** SVG `d` string. `m`, when given, is applied to every coordinate pair before formatting. */
+/**
+ * SVG `d` string. `m`, when given, is applied to every coordinate pair before formatting.
+ *
+ * Commands before the first `moveto` are dropped. SVG requires path data to begin with a
+ * moveto, and **4 287 of the 4 288 glyph outline blobs in the sample begin with a `close`**
+ * (fill and stroke blobs never do). Emitting that leading `Z` makes the whole path invalid and
+ * resvg discards it without a word — every piece of text renders blank.
+ */
 export function toPathData(cmds: readonly PathCommand[], m?: Mat): string {
   const parts: string[] = [];
+  let started = false;
   for (const cmd of cmds) {
+    if (!started) {
+      if (cmd.op !== 'M') continue;
+      started = true;
+    }
     if (cmd.op === 'Z') {
       parts.push('Z');
       continue;

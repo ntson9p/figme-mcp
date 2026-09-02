@@ -97,3 +97,17 @@ test('pathBounds includes control points and is undefined for an empty path', ()
     h: 0,
   });
 });
+
+test('commands before the first moveto are dropped', () => {
+  // 4287 of the 4288 glyph outline blobs in the sample begin with a close command. SVG requires
+  // path data to start with a moveto, and resvg silently discards a path that does not.
+  const cmds: PathCommand[] = [
+    { op: 'Z', args: [] },
+    { op: 'M', args: [1, 2] },
+    { op: 'L', args: [3, 4] },
+    { op: 'Z', args: [] },
+  ];
+  assert.equal(toPathData(cmds), 'M1,2 L3,4 Z');
+  assert.equal(decodeCommands(encode(cmds)).length, 4, 'the decoder stays faithful to the bytes');
+  assert.equal(toPathData([{ op: 'Z', args: [] }]), '', 'a path with no moveto emits nothing');
+});

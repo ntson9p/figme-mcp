@@ -39,6 +39,7 @@ import {
 import { decodeCommands, toPathData } from './path.js';
 import { paintAttrs, paintsForStyle, type PaintEnv } from './paint.js';
 import { ReportBuilder, feat } from './report.js';
+import { buildText, hasCharactersWithoutOutlines } from './text.js';
 import { SvgWriter, fmt, toAttr, type Attrs } from './svg.js';
 
 export const DEFAULT_MAX_NODES = 20_000;
@@ -372,9 +373,52 @@ class Exporter {
     return parts;
   }
 
-  /** Implemented in R2. */
-  private emitText(t: TreeNode, _node: NodeChange): void {
-    this.report.unsupported('text-without-outlines', t.key);
+  /**
+   * §4.8 — glyph outlines and decoration rects. Glyph coordinates are baked into node-local
+   * pixels here, so gradient and image fills on text go through the ordinary paint path.
+   */
+  private emitText(t: TreeNode, node: NodeChange): void {
+    const draw = buildText(node, (i) => this.blob(i), this.report, t.key);
+    if (!draw) {
+      if (hasCharactersWithoutOutlines(node)) {
+        this.report.unsupported('text-without-outlines', t.key);
+      }
+      return;
+    }
+
+    const box = Exporter.box(node);
+    const own = objArr(node, 'fillPaints');
+    const paintsFor = (styleID: number): readonly KiwiObject[] =>
+      paintsForStyle(node, styleID, 'fillPaints') ?? own;
+
+    for (const run of draw.glyphs) {
+      for (const paint of paintsFor(run.styleID)) {
+        const attrs = paintAttrs(paint, box, this.env, t.key);
+        if (attrs) this.out.element('path', { d: run.d, ...attrs });
+      }
+    }
+
+    if (draw.decorations.length) this.report.seen('text-decoration');
+    for (const decoration of draw.decorations) {
+      for (const paint of paintsFor(decoration.styleID)) {
+        const attrs = paintAttrs(paint, box, this.env, t.key);
+        if (!attrs) continue;
+        for (const rect of decoration.rects) {
+          this.out.element('rect', {
+            x: rect.x,
+            y: rect.y,
+            width: rect.w,
+            height: rect.h,
+            ...attrs,
+          });
+        }
+      }
+    }
+
+    // Text strokes are not outlined into strokeGeometry (0 such nodes in the sample).
+    if (objArr(node, 'strokePaints').length > 0 && objArr(node, 'strokeGeometry').length === 0) {
+      this.report.unsupported('text-stroke', t.key);
+    }
   }
 }
 

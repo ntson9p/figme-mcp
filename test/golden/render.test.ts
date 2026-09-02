@@ -274,3 +274,77 @@ describe('R1.5 — instances rasterized', { skip: skipRaster }, () => {
     assert.ok(pixelAt(pixels, 20, 20)[3]! > 0, 'and the nested gear icon has ink');
   });
 });
+
+describe('R2 — text (F5)', { skip }, () => {
+  it('2:1341 outlines "Text" as one path per style run', async () => {
+    const { svg, bounds, report } = await renderNode(entry, '2:1341', { format: 'svg' });
+    assert.deepEqual(bounds, { x: 0, y: 0, w: 64, h: 24 }, 'layoutSize, not size');
+    assert.equal(svg.match(/<path /g)?.length, 1, '4 glyphs share one styleID, so one path');
+    assert.deepEqual(report.unsupported, []);
+  });
+
+  it('2:1339 now draws its text, leaving nothing unsupported', async () => {
+    const { report } = await renderNode(entry, '2:1339', { format: 'svg' });
+    assert.deepEqual(report.unsupported, []);
+    assert.deepEqual(report.approximated, []);
+  });
+
+  it('2:6971 emits its two underline rects', async () => {
+    const { svg, report } = await renderNode(entry, '2:6971', { format: 'svg' });
+    assert.equal(svg.match(/<rect /g)?.length, 2);
+    assert.ok(report.featuresPresent.includes('text-decoration'));
+  });
+
+  it('emoji glyphs are reported rather than drawn wrong', async () => {
+    const { report } = await renderNode(entry, '2:7098', { format: 'svg' });
+    assert.ok(report.approximated.some((a) => a.feature === 'emoji'));
+  });
+
+  it('almost every TEXT node carries glyph outlines', () => {
+    // The 40 without usable outlines are text-style definition nodes named after their font
+    // ("Meiryo/Regular/16", "Noto Sans Mono CJK JP/Bold/21"), not content.
+    let total = 0;
+    let noDerived = 0;
+    let zeroGlyphs = 0;
+    for (const t of entry.index.tree.ordered) {
+      if (t.node['type'] !== 'TEXT') continue;
+      total++;
+      const derived = t.node['derivedTextData'] as { glyphs?: unknown[] } | undefined;
+      if (!derived) noDerived++;
+      else if (!(derived.glyphs ?? []).length) zeroGlyphs++;
+    }
+    assert.equal(total, 16_894);
+    assert.equal(noDerived, 39);
+    assert.equal(zeroGlyphs, 1);
+    assert.equal(total - noDerived - zeroGlyphs, 16_854, 'F5: 16 854 nodes have glyphs');
+  });
+});
+
+describe('R2 — text rasterized', { skip: skipRaster }, () => {
+  it('the digit "2" sits on its baseline, not mirrored below it', async () => {
+    // Glyph outlines are y-up em units: the flat base bar is at em y=0 and the top arc at 0.751.
+    // With fontSize 12 and a baseline at y=12.72 the ink must land in rows 3..13 of 18.
+    const { pixels } = await png('2:1336', { scale: 1 });
+    assert.equal(pixels.width, 8);
+    assert.equal(pixels.height, 18);
+    const ink = inkBounds(pixels)!;
+    assert.ok(ink.y0 >= 3, `ink starts at row ${ink.y0}`);
+    assert.ok(ink.y1 <= 13, `ink ends at row ${ink.y1} — rows 13..17 mean the sign is flipped`);
+  });
+
+  it('"Yesterday 9:41" starts where its first pen position says', async () => {
+    // baseline[0].position.x = 94.06, so nothing may be inked before column 90.
+    const { pixels } = await png('2:7099', { scale: 1 });
+    assert.equal(pixels.width, 267);
+    const ink = inkBounds(pixels)!;
+    assert.ok(ink.x0 >= 90, `first ink column ${ink.x0}`);
+    assert.ok(ink.x1 <= 180, `last ink column ${ink.x1}`);
+  });
+
+  it('the underlined Japanese block inks both its text and its rules', async () => {
+    const { pixels } = await png('2:6971', { scale: 1 });
+    const ink = inkBounds(pixels)!;
+    assert.ok(ink.y0 < 20, 'the first line is drawn');
+    assert.ok(ink.y1 > 160, 'and the underline under the last line');
+  });
+});
