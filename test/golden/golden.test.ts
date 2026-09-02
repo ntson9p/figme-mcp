@@ -658,7 +658,7 @@ describe('M6 — response budgets and hardening', { skip }, () => {
     await harness?.close();
   });
 
-  it('registers exactly the 11 v1 tools, each with a description', async () => {
+  it('registers exactly the 12 tools, each with a description', async () => {
     const tools = await harness.listTools();
     assert.deepEqual(
       tools.map((t) => t.name).sort(),
@@ -670,6 +670,7 @@ describe('M6 — response budgets and hardening', { skip }, () => {
         'fig_instance',
         'fig_node',
         'fig_overview',
+        'fig_render',
         'fig_style',
         'fig_text',
         'fig_tree',

@@ -50,7 +50,7 @@ const call = async (name, args) => {
 const server = client.getServerVersion();
 console.log(`connected to ${server?.name} v${server?.version} over stdio`);
 const { tools } = await client.listTools();
-check('tools/list returns the 11 v1 tools', tools.length === 11, tools.map((t) => t.name).join(', '));
+check('tools/list returns the 12 tools', tools.length === 12, tools.map((t) => t.name).join(', '));
 
 // 1 -------------------------------------------------------------------------------------
 console.log('\n1. fig_overview');
@@ -122,6 +122,22 @@ check('27 sets / 273 variables', vars.json.totalSets === 27 && vars.json.totalVa
 check('modes and values are listed',
   vars.json.sets?.some((s) => s.modes?.length > 1) && vars.json.variables?.[0]?.values,
   JSON.stringify(vars.json.variables?.[0]));
+
+// 8 -------------------------------------------------------------------------------------
+console.log('\n8. fig_render on the tab frame (2:1339)');
+const render = await call('fig_render', { guid: '2:1339', scale: 2 });
+check('render succeeds', !render.isError, render.text.slice(0, 200));
+if (!render.isError) {
+  check('returns viewable image content', render.first?.type === 'image', `type=${render.first?.type}`);
+  const report = render.json;
+  check('268x80 at scale 2', report.width === 268 && report.height === 80,
+    `${report.width}x${report.height}`);
+  check('nothing unsupported or approximated',
+    (report.unsupported ?? []).length === 0 && (report.approximated ?? []).length === 0,
+    JSON.stringify([report.unsupported, report.approximated]));
+  const pngBytes = Buffer.from(render.first?.data ?? '', 'base64').length;
+  console.log(`   ${report.nodesDrawn} nodes, ${report.svgBytes} B of SVG, ${pngBytes} B of PNG`);
+}
 
 await client.close();
 console.log(`\n${failures === 0 ? 'SMOKE TEST PASSED' : `SMOKE TEST FAILED (${failures} checks)`}`);

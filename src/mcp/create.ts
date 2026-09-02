@@ -17,6 +17,7 @@ import * as instance from './tools/instance.js';
 import * as variables from './tools/variables.js';
 import * as image from './tools/image.js';
 import * as blob from './tools/blob.js';
+import * as render from './tools/render.js';
 
 export const SERVER_NAME = 'figfile';
 export const SERVER_VERSION = '1.0.0';
@@ -30,6 +31,9 @@ export const INSTRUCTIONS = [
   'fig_text extracts copy, fig_components / fig_instance cover the design system, fig_variables',
   'lists tokens, fig_image returns bitmaps, fig_blob exposes raw vector payloads.',
   '',
+  'fig_render returns a picture of any node - the fastest way to understand a frame. Always',
+  'check its approximated/unsupported lists before trusting fine visual detail.',
+  '',
   'Node guids are "sessionID:localID" strings such as "2:1339". Responses are budgeted: when one',
   'is cut you get truncated:true plus an opaque nextCursor to pass back.',
 ].join('\n');
@@ -40,7 +44,7 @@ export function createServer(ctx: ToolContext): McpServer {
     { instructions: INSTRUCTIONS },
   );
   const tools = [
-    overview, tree, node, find, text, style, components, instance, variables, image, blob,
+    overview, tree, node, find, text, style, components, instance, variables, image, blob, render,
   ];
   for (const mod of tools) {
     mod.register(server, ctx);

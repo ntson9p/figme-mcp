@@ -46,6 +46,14 @@ import { SvgWriter, fmt, toAttr, type Attrs } from './svg.js';
 
 export const DEFAULT_MAX_NODES = 20_000;
 export const HARD_MAX_NODES = 60_000;
+/**
+ * `maxNodes` counts nodes in the TREE, which is the number a caller can see with fig_tree. The
+ * traversal visits many more, because every INSTANCE expands into the symbol it points at
+ * (F17) — page `0:1` is 14 912 tree nodes but walks several times that. So the runtime guard is
+ * a separate, larger budget derived from `maxNodes`.
+ */
+export const VISIT_FACTOR = 12;
+export const HARD_MAX_VISITS = 400_000;
 /** A render whose SVG exceeds this is refused rather than handed to the rasterizer. */
 export const MAX_SVG_BYTES = 64 * 1024 * 1024;
 /** Instances nested deeper than this are almost certainly a cycle in a damaged file. */
@@ -81,7 +89,7 @@ class Exporter {
   private readonly out = new SvgWriter();
   private readonly report = new ReportBuilder();
   private readonly bounds: BoundsCache;
-  private readonly maxNodes: number;
+  private readonly maxVisits: number;
   private readonly collectBoxes: boolean;
   private readonly background: string | undefined;
   private readonly boxes: NodeBox[] = [];
@@ -98,7 +106,8 @@ class Exporter {
     this.entry = entry;
     this.root = root;
     this.bounds = new BoundsCache(entry);
-    this.maxNodes = Math.min(opts.maxNodes ?? DEFAULT_MAX_NODES, HARD_MAX_NODES);
+    const maxNodes = Math.min(opts.maxNodes ?? DEFAULT_MAX_NODES, HARD_MAX_NODES);
+    this.maxVisits = Math.min(maxNodes * VISIT_FACTOR, HARD_MAX_VISITS);
     this.collectBoxes = opts.collectBoxes === true;
     this.background = opts.background;
   }
@@ -160,9 +169,11 @@ class Exporter {
 
   private emitNode(t: TreeNode, isRoot: boolean): void {
     this.report.nodesVisited += 1;
-    if (this.report.nodesVisited > this.maxNodes) {
+    if (this.report.nodesVisited > this.maxVisits) {
       throw new Error(
-        `subtree exceeds maxNodes (${this.maxNodes}); render a smaller node or raise maxNodes`,
+        `this render walked more than ${this.maxVisits} nodes — every instance expands into the ` +
+          `component it points at, so a page costs far more than its layer count; ` +
+          `render a smaller node or raise maxNodes`,
       );
     }
     const node = this.effective(t);

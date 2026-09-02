@@ -28,12 +28,15 @@ fig_style     → display:flex, direction:row, gap:8, padding:"8px 16px",
 
 These are deliberate, permanent limits — not missing features:
 
-- **No rendering and no screenshots.** A `.fig` contains no rendered pixels of your frames.
-  The only bitmaps in the file are the images placed in image fills plus a 400×219
-  `thumbnail.png`. Rendering a frame would mean reimplementing Figma's layout and raster engine.
-  `fig_image` returns the *embedded* bitmaps, never a picture of a design.
-- **No writing.** Nothing is ever written back into a `.fig`. The single write path in the whole
-  server is `fig_image { savePath }`, which copies one embedded bitmap to a path you name.
+- **Rendering is best-effort, not pixel-perfect.** A `.fig` contains no rendered pixels of your
+  frames, but it does contain everything needed to draw them again: Figma bakes outlined
+  strokes, combined booleans, per-glyph outlines and per-instance geometry into the file at save
+  time. `fig_render` uses that to produce a real picture offline — see
+  [Rendering](#rendering-fig_render) for exactly what is exact and what is approximated. It is
+  not a screenshot of Figma and never will be: read the report before trusting fine detail.
+- **No writing.** Nothing is ever written back into a `.fig`. The only write paths in the whole
+  server are `fig_image { savePath }` and `fig_render { savePath }`, which write to a path you
+  name.
 - **No Figma API and no network.** Nothing here talks to figma.com. Library assets published
   from *other* files (styles, variables, components) cannot be resolved offline; they come back
   as their opaque `assetRef` so you can see that they exist and where they point.
@@ -94,7 +97,8 @@ Every tool takes `file` (path to the `.fig`). Node references are **guid strings
 an opaque `nextCursor` you can pass back.
 
 The intended workflow: **`fig_overview` → `fig_tree` a page → `fig_node` / `fig_style` a guid**,
-with `fig_find` to jump straight to something by name or copy.
+with `fig_find` to jump straight to something by name or copy, and `fig_render` whenever seeing
+the thing is faster than reading it.
 
 ### 1. `fig_overview` — orient yourself
 
@@ -273,6 +277,56 @@ bytes to disk.
 // → fig_blob { "file": "…", "index": 16, "maxBytes": 8, "encoding": "hex" }
 { "index": 16, "byteLength": 96, "returnedBytes": 8, "data": "0100000000020080",
   "truncated": true, "blobCount": 9651 }
+```
+
+### 12. `fig_render` — a picture of a node
+
+`guid` (any node, or a page), `format` (`png` | `svg`, default `png`), `scale` (default 2),
+`maxSize` (longest edge, default 1568), `background` (`transparent` | `page`), `savePath`,
+`maxNodes` (default 20000, counted in layers).
+
+```jsonc
+// → fig_render { "file": "…", "guid": "2:1339" }
+// [image content, 268x80 PNG]
+{ "root": { "guid": "2:1339", "name": "Frame 39", "type": "FRAME" },
+  "bounds": { "x": 0, "y": 0, "w": 134, "h": 40 }, "width": 268, "height": 80, "scale": 2,
+  "nodesVisited": 9, "nodesDrawn": 8, "svgBytes": 4757, "renderMs": 4.6, "rasterMs": 55.3,
+  "unsupported": [], "approximated": [], "format": "png" }
+```
+
+---
+
+## Rendering (`fig_render`)
+
+Nothing is fetched and no font is needed: Figma stores outlined strokes, combined booleans,
+per-glyph outlines and per-instance resolved geometry in the file, so the renderer consumes
+what Figma already computed. The SVG it builds is rasterized by
+[`@resvg/resvg-wasm`](https://github.com/yisibl/resvg-js), an **optional** dependency — with it
+uninstalled, everything still works and `fig_render` returns SVG instead of PNG.
+
+**Exact**: solid fills, linear and radial gradients, image fills in all four scale modes,
+strokes including inside/outside alignment, boolean operations, text (glyph outlines, per-run
+colours, underline and strikethrough), component instances with their overrides, frame
+clipping, layer opacity, the fifteen shared blend modes, drop and inner shadows, layer blur,
+and all three mask types.
+
+**Approximated, and always reported**: background blur (drawn flat — a backdrop filter cannot
+see behind an isolated subtree), `LINEAR_DODGE` and `LINEAR_BURN` (drawn as `screen` and
+`multiply`), angular and diamond gradients (drawn as their average colour), image crop and
+image rotation.
+
+**Skipped, and always reported**: emoji glyphs, FigJam-style nodes (`WIDGET`, `CONNECTOR`,
+`SHAPE_WITH_TEXT`), text without stored outlines, and strokes on text.
+
+Every response carries `unsupported` and `approximated` lists naming the feature and up to five
+example guids. An empty pair means the renderer believes it drew the node exactly. Exact values
+always remain available from `fig_node`, `fig_style` and `fig_text`.
+
+There is also a CLI for the same thing:
+
+```bash
+npm run build
+node scripts/render.mjs figma-input/sample.fig 2:1339 out.png --scale 2 --background page
 ```
 
 ---

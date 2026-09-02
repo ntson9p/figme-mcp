@@ -5,12 +5,16 @@
  * holds ~900 MB of decoded objects and `node --test` runs test files in parallel processes.
  * One `describe` per milestone; every expected value comes from docs/render-implementation-plan.md.
  */
-import { describe, it, before } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { ASSET_EXISTS, ASSET_PATH, SKIP_MESSAGE } from '../fixtures/asset.ts';
-import { FileCache, type CacheEntry } from '../../dist/cache.js';
+import type { CacheEntry } from '../../dist/cache.js';
 import { decodeCommands, roundCommands, toPathData } from '../../dist/render/path.js';
 import { renderNode, rasterizer } from '../../dist/render/index.js';
+import { connect, type Harness } from '../fixtures/mcp.ts';
 import { decodePng, inkBounds, pixelAt } from '../visual/lib/png.ts';
 
 const skip = ASSET_EXISTS ? false : SKIP_MESSAGE;
@@ -20,8 +24,16 @@ const RASTER_READY = (await rasterizer()) !== undefined;
 const skipRaster = skip !== false ? skip : RASTER_READY ? false : 'rasterizer not installed';
 
 let entry: CacheEntry;
-before(() => {
-  if (ASSET_EXISTS) entry = new FileCache(1).get(ASSET_PATH);
+let harness: Harness;
+before(async () => {
+  if (!ASSET_EXISTS) return;
+  // One harness, and its cache is also the source for the direct renderNode tests: a parse
+  // holds ~900 MB, so this file must never decode the asset twice.
+  harness = await connect(1);
+  entry = harness.ctx.cache.get(ASSET_PATH);
+});
+after(async () => {
+  await harness?.close();
 });
 
 /** Render and decode in one step; every PNG assertion below goes through this. */
@@ -525,5 +537,77 @@ describe('R4 — effects rasterized', { skip: skipRaster }, () => {
     for (let i = 3; i < pixels.data.length; i += 4) if (pixels.data[i]! > 32) ink++;
     const ratio = ink / (pixels.width * pixels.height);
     assert.ok(ratio > 0.1 && ratio < 0.6, `arrow covers ${ratio.toFixed(3)}, not the whole box`);
+  });
+});
+
+describe('R5 — the fig_render tool', { skip: skipRaster }, () => {
+  it('returns an image block plus a JSON report inside budget', async () => {
+    const res = await harness.call('fig_render', { file: ASSET_PATH, guid: '2:1339', scale: 2 });
+    assert.equal(res.isError, false);
+    const blocks = res.content as { type: string; data?: string; text?: string; mimeType?: string }[];
+    assert.equal(blocks[0]!.type, 'image');
+    assert.equal(blocks[0]!.mimeType, 'image/png');
+    const pixels = decodePng(Buffer.from(blocks[0]!.data!, 'base64'));
+    assert.equal(pixels.width, 268);
+    assert.equal(pixels.height, 80);
+
+    const report = JSON.parse(blocks[1]!.text!) as Record<string, unknown>;
+    assert.equal(report['width'], 268);
+    assert.equal(report['format'], 'png');
+    assert.ok(!('featuresPresent' in report), 'the tester-only list is not shipped to callers');
+    assert.ok(blocks[1]!.text!.length <= 20_000, `report is ${blocks[1]!.text!.length} chars`);
+  });
+
+  it('format:"svg" returns the document as text', async () => {
+    const res = await harness.call('fig_render', { file: ASSET_PATH, guid: '2:1558', format: 'svg' });
+    assert.equal(res.isError, false);
+    assert.ok(res.text.startsWith('<svg'), res.text.slice(0, 40));
+  });
+
+  it('savePath writes the file and reports where', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'figrender-'));
+    const target = path.join(dir, 'out.png');
+    try {
+      const res = await harness.call('fig_render', { file: ASSET_PATH, guid: '2:1558', savePath: target });
+      assert.equal(res.isError, false);
+      assert.equal(res.json['savedTo'], target);
+      assert.ok(fs.statSync(target).size > 0);
+      assert.equal(decodePng(fs.readFileSync(target)).width, 36, 'default scale 2 on an 18px node');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('an unknown guid is an error, not a crash', async () => {
+    const res = await harness.call('fig_render', { file: ASSET_PATH, guid: '99:99' });
+    assert.equal(res.isError, true);
+    assert.match(res.text, /no node with guid/);
+  });
+
+  it('maxNodes refuses an oversized subtree and names the knob', async () => {
+    const res = await harness.call('fig_render', { file: ASSET_PATH, guid: '0:1', maxNodes: 10 });
+    assert.equal(res.isError, true);
+    assert.match(res.text, /maxNodes/);
+  });
+
+  it('a whole page is downscaled to fit maxSize', async () => {
+    const res = await harness.call('fig_render', {
+      file: ASSET_PATH,
+      guid: '0:1',
+      maxSize: 512,
+      savePath: path.join(os.tmpdir(), 'figrender-page.png'),
+    });
+    assert.equal(res.isError, false);
+    const width = res.json['width'] as number;
+    const height = res.json['height'] as number;
+    assert.ok(width <= 512 && height <= 512, `${width}x${height}`);
+    assert.ok((res.json['scale'] as number) < 1, 'the effective scale was lowered');
+    fs.rmSync(path.join(os.tmpdir(), 'figrender-page.png'), { force: true });
+  });
+
+  it('is registered alongside the original eleven tools', async () => {
+    const tools = await harness.listTools();
+    assert.equal(tools.length, 12);
+    assert.ok(tools.some((t) => t.name === 'fig_render'));
   });
 });
