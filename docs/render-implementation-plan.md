@@ -17,7 +17,8 @@
 2. **Runtime dependencies stay `@modelcontextprotocol/sdk` and `zod`.** The rasterizer
    `@resvg/resvg-wasm` is an **optional** dependency, loaded with a dynamic `import()` inside
    `try/catch`. The server, all existing tools and the SVG output must work when it is absent.
-   Development-only packages: `pixelmatch`, `pngjs`.
+   Development-only packages: `pixelmatch`, `pngjs`. The rasterizer is **already installed and
+   pinned** to `2.6.2`; its measured behaviour is **Appendix E**, which is normative.
 3. **No network at runtime. Nothing is ever written into a `.fig`.** The only file writes are
    `savePath` (the tool), the CLI output file, and `reports/` (the tester).
 4. **Keep everything green.** The 102 existing tests, `npm run smoke`, `npm run crosscheck`, and
@@ -52,7 +53,7 @@ node scripts/render.mjs figma-input/sample.fig 2:1339 "<scratchpad>/2_39.png" --
 
 then Read `<scratchpad>/2_39.png`. Appendix A says in words what each reference node must look
 like. If the optional rasterizer is not installed the CLI writes SVG instead, which you cannot
-view — install it (`npm install`) before relying on your eyes.
+view; `@resvg/resvg-wasm@2.6.2` is already in this repo, so a plain `npm install` is enough.
 
 ### 0.2 Vocabulary
 
@@ -225,9 +226,13 @@ imports the dev packages.
 }
 ```
 
-`@resvg/resvg-wasm` publishes `index.mjs` (ESM), `index.js` (CJS), `index.d.ts` and
-`index_bg.wasm` (2.5 MB); its `exports` map exposes `.` and `./index_bg.wasm`. Read its README
-before writing `raster.ts` and confirm the two calls used in §5 (`initWasm`, `new Resvg(...)`).
+**`@resvg/resvg-wasm@2.6.2` is already installed** (approved and added on 2026-09-02) and its
+behaviour has been measured — see **Appendix E**, which is normative. Do not re-research it and
+do not change the version: the version is pinned **exactly** (no `^`) because a minor bump can
+change anti-aliasing, which would shift every stored ratchet score in §9.7 for reasons that have
+nothing to do with your code. The package publishes `index.mjs` (ESM), `index.js` (CJS),
+`index.d.ts` and `index_bg.wasm` (2.42 MB); its `exports` map exposes `.` and `./index_bg.wasm`;
+it has no dependencies of its own and contains no native binary.
 `pixelmatch` 7 is ESM (`import pixelmatch from 'pixelmatch'`) and returns the number of
 mismatched pixels. `pngjs` 7: `import { PNG } from 'pngjs'`; `PNG.sync.read(buf)` →
 `{ width, height, data }` (RGBA), `PNG.sync.write(png)` → Buffer.
@@ -450,8 +455,13 @@ clipPathFor(t):
   if !(type in FRAME|SYMBOL|INSTANCE) or bool(n,'frameMaskDisabled') === true or bool(n,'resizeToFit') === true: return undefined
   paths = fillGeometry paths that decode to non-empty commands
   key = 'clip:' + t.key
-  return out.def(key, id => `<clipPath id="${id}" clipPathUnits="userSpaceOnUse">` + (paths.length ? paths.map(p => `<path d="…" fill-rule="…"/>`) : `<rect x="0" y="0" width="${w}" height="${h}"/>`) + `</clipPath>`)
+  return out.def(key, id => `<clipPath id="${id}" clipPathUnits="userSpaceOnUse">` + (paths.length ? paths.map(p => `<path d="…" clip-rule="…"/>`) : `<rect x="0" y="0" width="${w}" height="${h}"/>`) + `</clipPath>`)
 ```
+
+> **Use `clip-rule`, never `fill-rule`, on a path inside `<clipPath>`.** Measured (Appendix E,
+> R11): resvg **silently ignores** `fill-rule` there, so an ODD-winding clip shape loses its
+> holes with no error. `clip-rule="evenodd"` and `style="clip-rule:evenodd"` both work.
+> Elsewhere — ordinary paths and `<mask>` children — it is `fill-rule` as usual.
 
 The clip group wraps **only the children** (F12): the container's own strokes are emitted
 after the clip group closes.
@@ -611,6 +621,13 @@ Coverage by `maskType` (default ALPHA):
 Using luminance masks for all three types avoids depending on the `mask-type` property.
 The mask node itself is never painted as content.
 
+Measured (Appendix E, R7–R8): resvg computes mask luminance in **sRGB** — a `#808080` mask
+gives coverage 128, not the ~55 that linearRGB would give — and it **ignores the
+`color-interpolation` attribute** entirely, so all three values behave the same. Keep emitting
+`color-interpolation="sRGB"` anyway: it is a no-op in resvg but makes browsers and Inkscape
+agree with it. Both the ALPHA trick and nested masks were verified to work, and a `<mask>` child
+does honour `fill-rule` (unlike a `<clipPath>` child).
+
 ### 4.11 Opacity and blend modes
 
 `opacity < 1` → `opacity` attribute on the node group (children composite first, then fade —
@@ -655,8 +672,12 @@ image scale modes, `dashPattern` presence, text decorations, emoji.
   (default 1568, hard maximum 4096) by lowering the effective scale; report the effective scale.
 * `MAX_SVG_BYTES = 64 MB`: if the SVG string exceeds it, fail with `oversize` and a hint
   (fewer nodes, or the biggest images are duplicated too often). Optional optimisation for
-  later: one `<image id>` per hash in `<defs>` referenced through `<use>` inside a nested
-  `<svg viewBox preserveAspectRatio>`; verify in resvg before adopting.
+  later, now **verified to work in resvg** (Appendix E, R12): one `<image id>` per hash in
+  `<defs>` referenced through `<use>`, either inside a nested `<svg viewBox preserveAspectRatio>`
+  or under a `<g transform>`. Note that resvg's `imagesToResolve()`/`resolveImage()` pair — which
+  would let us keep bytes out of the SVG entirely — reports **only `http`/`https` hrefs**, so it
+  cannot help here and data URIs stay mandatory. Never emit an `http(s)` href: it would need
+  network access we do not do, and resvg draws nothing for it.
 * All numbers through `fmt()` (3 decimals). Build the SVG as an array of strings joined once.
 
 ### 4.14 Fallbacks when derived data is missing
@@ -683,41 +704,59 @@ import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
+interface RenderedImage { asPng(): Uint8Array; readonly width: number; readonly height: number; free(): void }
 interface ResvgModule {
   initWasm(input: Uint8Array): Promise<void>;
-  Resvg: new (svg: string, opts?: Record<string, unknown>) => { render(): { asPng(): Uint8Array; pixels: Uint8Array; width: number; height: number } };
+  Resvg: new (svg: string, opts?: Record<string, unknown>) => { render(): RenderedImage; free(): void };
 }
 let loading: Promise<ResvgModule | undefined> | undefined;
 
 /** Resolves to undefined when the optional package is not installed. Never throws. */
 export function rasterizer(): Promise<ResvgModule | undefined> {
   if (!loading) loading = (async () => {
+    let mod: ResvgModule;
     try {
       const name = '@resvg/resvg-wasm';                 // variable: keeps tsc from resolving the module at build time
-      const mod = (await import(name)) as ResvgModule;
+      mod = (await import(name)) as ResvgModule;
+    } catch { return undefined; }                       // not installed — the only "absent" case
+    try {
       const wasm = fs.readFileSync(require.resolve('@resvg/resvg-wasm/index_bg.wasm'));
       await mod.initWasm(wasm);
-      return mod;
-    } catch { return undefined; }
+    } catch (e) {
+      // initWasm() throws "Already initialized. The `initWasm()` function can be used only once."
+      // if some other copy of this module already ran it (two dist copies, a test harness, a
+      // second server in-process). That is success, not failure — the module is usable.
+      if (!/already initialized/i.test(String((e as Error)?.message))) return undefined;
+    }
+    return mod;
   })();
   return loading;
 }
 
-export interface RasterResult { png: Uint8Array; pixels: Uint8Array; width: number; height: number }
+export interface RasterResult { png: Uint8Array; width: number; height: number }
+/** undefined = no rasterizer. Throws only if resvg rejects the SVG (caller reports it). */
 export async function rasterize(svg: string, scale: number, background?: string): Promise<RasterResult | undefined> {
   const mod = await rasterizer(); if (!mod) return undefined;
-  const r = new mod.Resvg(svg, { fitTo: { mode: 'zoom', value: scale }, background, font: { loadSystemFonts: false }, logLevel: 'off' });
+  const r = new mod.Resvg(svg, { fitTo: { mode: 'zoom', value: scale }, background, font: { loadSystemFonts: false } });
   const img = r.render();
-  return { png: img.asPng(), pixels: img.pixels, width: img.width, height: img.height };
+  try { return { png: img.asPng(), width: img.width, height: img.height }; }
+  finally { img.free(); r.free(); }
 }
 ```
 
-Confirm option names against the installed package's README and `index.d.ts` (they are the
-same as `@resvg/resvg-js`). Do **not** rely on the layout of `pixels` (it may be
-premultiplied): every pixel comparison in the tester decodes the `png` bytes with `pngjs`, so
-both sides of a comparison always have the same straight-alpha RGBA layout. The SVG passed in
-has `width`/`height` at 1×, so `fitTo: zoom` produces `round(w × scale) × round(h × scale)`
-pixels.
+Everything above is measured, not assumed — see **Appendix E**. Four points the code depends on:
+
+* **`RasterResult` deliberately does not expose `pixels`.** resvg's `pixels` buffer is
+  **premultiplied** (measured: 50 %-alpha red comes back as `128,0,0,128`, not `255,0,0,128`),
+  so comparing it against `pngjs` output would be silently wrong everywhere. Decoding `png` with
+  `pngjs` gives straight alpha on both sides of every comparison. Do not add `pixels` back.
+* **`logLevel` is not an option** of this package (it exists on `@resvg/resvg-js`). Unknown keys
+  are ignored rather than rejected, so passing it does no harm and no good — leave it out.
+* **`new Resvg(...)` throws a plain `Error` on malformed SVG** ("SVG data parsing failed …").
+  `rasterize` lets it propagate; the tool and the CLI catch it and report `svg-rejected`.
+* **Sizing**: the SVG carries `width`/`height` at 1×, and `fitTo: zoom` produces
+  `round(w × scale) × round(h × scale)` — verified on fractional cases (18×14 at 1.1 → 20×15;
+  14.25 at 2 → 29). `free()` is hygiene, not a leak fix; memory is bounded either way.
 
 ---
 
@@ -956,7 +995,7 @@ R0 golden decode of blob #390.
 ### R1 — Rasterizer, CLI, exporter core
 `raster.ts`, `bounds.ts`, `color.ts`, `report.ts`, `export.ts` with containers, shapes,
 SOLID paints, clipping, opacity, transforms; `index.ts`; `scripts/render.mjs`;
-`optionalDependencies` added and installed.
+the rasterizer is already in `optionalDependencies` and installed — nothing to add there.
 **Accept**: R1 golden rows; render `2:1339` and `2:1558` and **look** at the PNGs (Appendix A);
 the server still starts and the 11 existing tools are unchanged.
 
@@ -1167,7 +1206,10 @@ fixtures; check each file's licence before committing it.
    the viewBox.
 5. **Never use an unbounded mask or filter region**; the rasterizer allocates it.
 6. **`color-interpolation-filters="sRGB"`** on every filter, or shadows come out too light.
-7. **`fmt()` everything**; a `NaN` or `1e-7` in an attribute makes resvg reject the file.
+7. **`fmt()` everything, and make `fmt()` throw on `NaN`/`Infinity`.** Measured: resvg does
+   **not** reject a `NaN` attribute — it silently drops that element and renders everything
+   else, so a whole shape disappears with no error anywhere. Your own guard is the only
+   detection. (Malformed *markup*, by contrast, does throw.)
 8. **Absent fields mean defaults** (§0 rule 8); `imageScaleMode` absent is STRETCH, not FILL.
 9. **Paint order**: `fillPaints[0]` is the bottom paint; children index 0 is the bottom layer.
 10. **Effects on containers use the group's alpha** (fills + children + strokes), which is
@@ -1176,6 +1218,12 @@ fixtures; check each file's licence before committing it.
 12. **Do not read `advance`** to place glyphs; `position` already includes kerning.
 13. **Windows file names**: `2:1339` → `2_39`.
 14. **Tests import from `dist/`**: run `npm run build` before `node --test`; `npm test` does both.
+15. **`clip-rule`, not `fill-rule`, inside `<clipPath>`** — `fill-rule` there is ignored in
+    silence and ODD-winding clips lose their holes (§4.6, Appendix E R11).
+16. **Never touch resvg's `pixels`** — it is premultiplied. Decode `png` with `pngjs` (§5).
+17. **A wrong `renderBounds` crops effects rather than shifting them**: the `<filter>` region
+    clips its own output, so a shadow that looks cut off on one side means the §4.5 margin rule
+    is too small, not that the filter chain is wrong.
 
 ---
 
@@ -1191,3 +1239,70 @@ fixtures; check each file's licence before committing it.
 `featuresPresent` uses the same keys for what exists in a subtree (e.g. `paint:SOLID`,
 `effect:DROP_SHADOW`, `blend:MULTIPLY`, `mask:OUTLINE`, `image-mode:FILL`,
 `text-decoration`, `stroke-dashed`), whether or not the exporter drew it exactly.
+
+---
+
+## Appendix E — Verified rasterizer contract (`@resvg/resvg-wasm@2.6.2`)
+
+Every row was **measured** on 2026-09-02 against the installed package on this machine
+(Node 24.3.0, Windows). These are facts, not expectations: do not re-research them, and treat a
+disagreement between your code and this table as a bug in your code. Where a row corrects an
+earlier assumption the affected section is named.
+
+| # | Behaviour | Measured result |
+|---|---|---|
+| R1 | `initWasm(buffer)` accepts a Node `Buffer` | works; `index_bg.wasm` resolves through the package `exports` map |
+| R2 | `initWasm()` called a second time | **throws** `Already initialized. The initWasm() function can be used only once.` — §5 treats this as success |
+| R3 | `fitTo: { mode: 'zoom', value: s }` | output is `round(w × s) × round(h × s)`: 18×14 @2 → 36×28, @2.5 → 45×35, @1.1 → **20×15**, 14.25 @2 → **29** |
+| R4 | no `fitTo` | renders at the SVG's own `width`/`height` |
+| R5 | `pixels` | **premultiplied** — 50 %-alpha red reads `128,0,0,128`. Never compare it with `pngjs` output (§5) |
+| R6 | `asPng()` / `pixels` buffers | plain JS copies, not views into WASM memory; safe to keep after `free()` |
+| R7 | `<mask>` luminance | computed in **sRGB**: `#808080` → coverage 128 (linearRGB would be ~55) |
+| R8 | `color-interpolation` on `<mask>` | **ignored** — sRGB, linearRGB and absent all give 128 (§4.10) |
+| R9 | ALPHA-mask trick (`feColorMatrix` RGB→1, alpha kept) | gives exactly the alpha as coverage (50 % → 128) ✓ §4.10 |
+| R10 | nested `<mask>` elements | intersect correctly |
+| R11 | `fill-rule` on a `<clipPath>` child | **silently ignored** — use `clip-rule` (or `style="clip-rule:…"`). On ordinary paths and on `<mask>` children `fill-rule` works normally (§4.6) |
+| R12 | `<use>` of a `<defs><image>` | works both inside a nested `<svg viewBox preserveAspectRatio>` and under a `<g transform>` — the §4.13 de-duplication is viable |
+| R13 | `imagesToResolve()` / `resolveImage()` | lists **only `http`/`https`** hrefs; relative names, bare ids and custom schemes return `[]`. Data URIs stay mandatory (§4.13) |
+| R14 | `<image>` href form | `xlink:href` and plain `href` both work; `data:image/png;base64,…` decodes |
+| R15 | `<pattern patternUnits="userSpaceOnUse">` + `preserveAspectRatio` | `none`, `xMidYMid meet` (letterboxes) and `xMidYMid slice` (covers) all behave per spec; tiling repeats ✓ §4.7.3 |
+| R16 | `mix-blend-mode:multiply` in `style` | honoured (red under blue → black) ✓ §4.11 |
+| R17 | `isolation:isolate` on a `<g>` | honoured (the same pair stays blue) ✓ §4.11 |
+| R18 | group `opacity` | composites the group first, then fades — overlapping children do not darken ✓ §4.11 |
+| R19 | the §4.9 drop-shadow chain verbatim | renders: shadow below the shape, shape on top, empty outside. `feFlood`, `feColorMatrix` ×127, `feMorphology`, `feOffset`, `feGaussianBlur`, `feComposite operator="out"`, `feBlend` all supported |
+| R20 | the §4.9 inner-shadow chain verbatim | renders; `feComposite operator="arithmetic" k2="-1" k3="1"` supported |
+| R21 | `<filter>` region | **clips its own output** — content outside `x/y/width/height` is cut. A too-small §4.5 margin crops shadows (Pitfall 17) |
+| R22 | `filter` + `mask` + `opacity` + `mix-blend-mode` on nested groups | combine correctly in one render |
+| R23 | `viewBox` with a negative origin | applied correctly |
+| R24 | `NaN` in an attribute | **no error** — the element is silently dropped (Pitfall 7) |
+| R25 | malformed markup | throws a plain `Error`, e.g. `SVG data parsing failed cause invalid attribute at 1:5` |
+| R26 | an SVG with no drawable content | renders an empty image of the declared size (no error) |
+| R27 | unknown option keys (e.g. `logLevel`) | accepted and ignored |
+| R28 | `getBBox()` | returns the exact geometry bbox (a 30×40 rect at (10,20) → `10,20,30,40`) — usable as an independent check on §4.5 in tester level 2 |
+| R29 | `stroke-dasharray` | honoured (only needed by the §4.14 fallbacks) |
+| R30 | performance | 4096×4096 flat fill in 98 ms; 20 000 `<path>` elements (886 KB of SVG) at 2× in 139 ms. **Rasterization is not the bottleneck — the exporter is.** |
+| R31 | memory | 300 renders: RSS 74→98 MB with `free()`, 98→103 MB without. Bounded either way; `free()` is hygiene |
+
+Two consequences worth stating plainly:
+
+1. **Every SVG construct this plan relies on is supported.** There is no feature in §4 that
+   resvg cannot draw, so a level-3 failure means our SVG is wrong — never that the renderer
+   fell short. The one exception is Figma's `<foreignObject>` background blur, which resvg
+   ignores; that is why §9.4 annotates the ceiling rather than counting it against us.
+2. **Two of resvg's failure modes are silent** (R11 `fill-rule` in a clip, R24 `NaN`). Both are
+   caught by construction: emit `clip-rule`, and make `fmt()` throw.
+
+### E.1 Reproducing this table
+
+The probe scripts are not part of the repository. To re-measure after a version bump, render
+small SVGs and inspect pixels directly:
+
+```js
+const mod = await import('@resvg/resvg-wasm');
+await mod.initWasm(fs.readFileSync(require.resolve('@resvg/resvg-wasm/index_bg.wasm')));
+const img = new mod.Resvg(svgString, { fitTo: { mode: 'zoom', value: 2 } }).render();
+// img.pixels is PREMULTIPLIED RGBA; index a pixel as (y * img.width + x) * 4
+```
+
+A 2×2 test PNG for image cases can be built with `node:zlib` alone (IHDR + deflated scanlines
++ IEND, colour type 6); no image library is needed.
