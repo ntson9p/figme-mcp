@@ -46,6 +46,7 @@ export const FEATURES = [
   'emoji',
   'glyph-rotation',
   'text-without-outlines',
+  'text-property-without-outlines',
   'text-stroke',
   'text-decoration',
   'stroke-dashed',
@@ -58,6 +59,8 @@ export const FEATURES = [
   'svg-rejected',
   'instance-unresolved',
   'instance-recursive',
+  'instance-property',
+  'instance-swap',
   'node-failed',
 ] as const;
 

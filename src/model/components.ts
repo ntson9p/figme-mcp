@@ -3,7 +3,8 @@
  *
  * Two addressing quirks matter here and are not obvious from the schema:
  *   1. `symbolData.symbolOverrides[].guidPath.guids` addresses descendants of the component by
- *      their `overrideKey`, not by their guid — see FileIndex.byOverrideKey().
+ *      their override identity — `overrideKey` when present, else guid — one segment per
+ *      instance-nesting level. See `overrideIdentity` and `resolveOverridePath` (model/instance).
  *   2. A variant member SYMBOL repeats its component-set's property ids with no name; the named
  *      definitions live on the component set (a FRAME with `isStateGroup`).
  */
@@ -11,6 +12,7 @@ import type { NodeChange } from '../fig/parse.js';
 import type { KiwiObject } from '../fig/kiwi.js';
 import type { FileIndex } from './index.js';
 import { guidKey, breadcrumb, type Guid, type TreeNode } from './tree.js';
+import { resolveOverridePath } from './instance.js';
 import { bool, colorHex, compact, jsonSafe, num, obj, objArr, r2, str } from './access.js';
 import { effectView, paintView, textBasics } from './summarize.js';
 import { describeVariableData } from './variables.js';
@@ -140,20 +142,17 @@ export function overrideFields(idx: FileIndex, partial: NodeChange): {
 export function instanceOverrides(idx: FileIndex, t: TreeNode, field: string): OverrideView[] {
   const symbolData = field === 'symbolOverrides' ? obj(t.node, 'symbolData') : t.node;
   const records = objArr(symbolData, field);
-  const byOverrideKey = idx.byOverrideKey();
-  const symbolId = guidKey(obj(obj(t.node, 'symbolData'), 'symbolID') as Guid | undefined);
-  const symbol = symbolId ? idx.node(symbolId) : undefined;
 
   return records.map((record) => {
     const path = objArr(obj(record, 'guidPath'), 'guids')
       .map((g) => guidKey(g as Guid))
       .filter((g): g is string => g !== undefined);
     const last = path[path.length - 1];
-    const candidates = last ? (byOverrideKey.get(last) ?? []) : [];
-    // The same overrideKey appears on every copy of a component; prefer the one that actually
-    // lives inside the symbol this instance points at.
+    // When the walk fails (a library symbol that is not in the file) the best that can be done
+    // is any node carrying the last key.
     const target =
-      (symbol ? candidates.find((c) => idx.isDescendant(c, symbol)) : undefined) ?? candidates[0];
+      resolveOverridePath(idx, t, path) ??
+      (last ? idx.byOverrideIdentity().get(last)?.[0] : undefined);
     const { fields, otherFields } = overrideFields(idx, record);
     return compact({
       path,

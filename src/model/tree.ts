@@ -35,6 +35,18 @@ export interface TreeNode {
   page: TreeNode | undefined;
 }
 
+/**
+ * The identity that instance override paths (`symbolData.symbolOverrides[].guidPath.guids` and
+ * `derivedSymbolData[].guidPath.guids`) use for a component descendant: its `overrideKey` when
+ * it has one — a node created by copying a component keeps the original's — else its own guid.
+ *
+ * Measured on the sample: 8 893 of 10 480 symbol descendants carry an explicit key; the other
+ * 1 587 are addressed by guid, by 30 061 of the file's 303 833 records.
+ */
+export function overrideIdentity(t: TreeNode): string {
+  return readGuid(t.node, 'overrideKey') ?? t.key;
+}
+
 export interface Tree {
   readonly root: TreeNode | undefined;
   readonly byKey: ReadonlyMap<string, TreeNode>;

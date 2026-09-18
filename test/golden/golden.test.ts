@@ -488,6 +488,25 @@ describe('M4 — components, instances and variables', { skip }, () => {
     assert.equal(override['fields'].fillsCleared, true);
   });
 
+  it('fig_instance resolves guid-addressed and nested override paths to their targets', async () => {
+    // A component created in this file has no overrideKey on its children: the path IS the guid.
+    const card = await harness.call('fig_instance', { file: ASSET_PATH, guid: '863:171090' });
+    const text = (card.json['overrides'] as Record<string, any>[])[0]!;
+    assert.deepEqual(text['path'], ['2:251114']);
+    assert.equal(text['targetGuid'], '2:251114');
+    assert.equal(text['targetType'], 'TEXT');
+    assert.equal(text['fields'].text.characters, 'Alpha | Beta | Gamma');
+
+    // A two-segment path walks into the nested instance's symbol for its second segment.
+    const panel = await harness.call('fig_instance', { file: ASSET_PATH, guid: '863:171102' });
+    const nested = (panel.json['overrides'] as Record<string, any>[]).find(
+      (o) => o['path'].length === 2,
+    )!;
+    assert.deepEqual(nested['path'], ['0:5668', '0:9389']);
+    assert.equal(nested['targetGuid'], '2:2610');
+    assert.equal(nested['targetName'], 'Rectangle 10');
+  });
+
   it('fig_instance resolves component-property assignments to their names', async () => {
     const r = await harness.call('fig_instance', { file: ASSET_PATH, guid: '8917:139972' });
     const props = (r.json['instance'] as Record<string, any>)['propAssignments'] as Record<

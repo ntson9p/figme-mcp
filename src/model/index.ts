@@ -5,7 +5,7 @@
  * built on first use because it duplicates every name and text run in lowercase.
  */
 import type { ParsedFig, NodeChange } from '../fig/parse.js';
-import { buildTree, guidKey, type Tree, type TreeNode, type Guid } from './tree.js';
+import { buildTree, guidKey, overrideIdentity, type Tree, type TreeNode, type Guid } from './tree.js';
 import { obj, objArr, str, bytes, hex, assetRefKey } from './access.js';
 import type { KiwiObject } from '../fig/kiwi.js';
 
@@ -42,7 +42,7 @@ export class FileIndex {
   readonly textNodeCount: number;
 
   private searchIndex: SearchEntry[] | undefined;
-  private overrideKeyIndex: Map<string, TreeNode[]> | undefined;
+  private overrideIdentityIndex: Map<string, TreeNode[]> | undefined;
   private propDefIndex: Map<string, PropDefEntry> | undefined;
 
   constructor(fig: ParsedFig) {
@@ -143,21 +143,21 @@ export class FileIndex {
   }
 
   /**
-   * `overrideKey` → the nodes carrying it. Instance override paths (`guidPath.guids`) address
-   * component descendants by their `overrideKey`, NOT by their guid, and the same key appears on
-   * every duplicate of a component, so a key can map to several nodes.
+   * Override identity → the nodes carrying it. Instance override paths (`guidPath.guids`)
+   * address component descendants by `overrideIdentity`: the `overrideKey` when the node has
+   * one, else its guid. The same key appears on every duplicate of a component, so a key can map
+   * to several nodes; a guid maps to exactly one.
    */
-  byOverrideKey(): ReadonlyMap<string, readonly TreeNode[]> {
-    if (this.overrideKeyIndex) return this.overrideKeyIndex;
+  byOverrideIdentity(): ReadonlyMap<string, readonly TreeNode[]> {
+    if (this.overrideIdentityIndex) return this.overrideIdentityIndex;
     const map = new Map<string, TreeNode[]>();
     for (const t of this.tree.ordered) {
-      const key = guidKey(obj(t.node, 'overrideKey') as Guid | undefined);
-      if (!key) continue;
-      const list = map.get(key);
+      const identity = overrideIdentity(t);
+      const list = map.get(identity);
       if (list) list.push(t);
-      else map.set(key, [t]);
+      else map.set(identity, [t]);
     }
-    this.overrideKeyIndex = map;
+    this.overrideIdentityIndex = map;
     return map;
   }
 

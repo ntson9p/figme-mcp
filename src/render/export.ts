@@ -12,17 +12,19 @@
 import type { CacheEntry } from '../cache.js';
 import type { KiwiObject } from '../fig/kiwi.js';
 import type { NodeChange } from '../fig/parse.js';
-import type { TreeNode } from '../model/tree.js';
+import { overrideIdentity, type TreeNode } from '../model/tree.js';
 import { bool, bytes, num, obj, objArr, str } from '../model/access.js';
 import { BoundsCache, effectMargins } from './bounds.js';
 import {
+  applyProps,
   descend,
   instanceShapeNode,
   mergeNode,
-  overrideKeyOf,
   resolveInstance,
   type OverrideRecords,
+  type PropAssignments,
 } from './instance.js';
+import { applyStyles, runPaints } from './style.js';
 import { expandBox, fromFigma, isIdentity, transformBox, unionBox, type Box } from './matrix.js';
 import {
   classify,
@@ -38,7 +40,7 @@ import {
   strokeAlign,
 } from './node.js';
 import { decodeCommands, ellipseCommands, roundedRectCommands, toPathData } from './path.js';
-import { paintAttrs, paintsForStyle, type PaintEnv } from './paint.js';
+import { paintAttrs, type PaintEnv } from './paint.js';
 import { alphaToWhiteFilter, blendStyle, effectsFilter } from './effects.js';
 import { ReportBuilder, feat } from './report.js';
 import { buildText, hasCharactersWithoutOutlines } from './text.js';
@@ -123,8 +125,12 @@ class Exporter {
   private readonly boxes: NodeBox[] = [];
   /** OUTLINE masks re-render their content with every paint forced to opaque white (§4.10). */
   private whiteout = false;
-  /** Override records of the innermost enclosing INSTANCE, keyed by overrideKey path (F17). */
+  /** Override records of the innermost enclosing INSTANCE, keyed by identity path (F17). */
   private frame: OverrideRecords | undefined;
+  /** Component-property assignments of the innermost enclosing INSTANCE (F18). */
+  private props: PropAssignments = new Map();
+  /** Effective TEXT nodes whose glyphs belong to the symbol's words, not the assigned ones. */
+  private readonly staleOutlines = new WeakSet<NodeChange>();
   /** Symbols currently being expanded, so a self-referential component cannot loop. */
   private readonly activeSymbols = new Set<string>();
   /** Distinguishes ids for the same symbol node drawn under different instances. */
@@ -162,12 +168,24 @@ class Exporter {
     return { x: 0, y: 0, w: size.w, h: size.h };
   }
 
-  /** The node as this instance sees it: the tree node merged with the active overrides (F17). */
+  /**
+   * The node as this instance sees it: the tree node merged with the active overrides and with
+   * the enclosing instance's property assignments applied (F17, F18), then with every colour or
+   * effect style it references resolved to that style's live value (F19).
+   */
   private effective(t: TreeNode): NodeChange {
-    if (!this.frame) return t.node;
-    const key = overrideKeyOf(t);
-    if (!key) return t.node;
-    return mergeNode(t.node, this.frame.get(key));
+    let node = t.node;
+    if (this.frame) {
+      const record = this.frame.get(overrideIdentity(t));
+      node = mergeNode(node, record);
+      const applied = applyProps(node, this.props, record?.['derivedTextData'] !== undefined);
+      if (applied.node !== node) {
+        this.report.seen('instance-property');
+        node = applied.node;
+        if (applied.staleOutlines) this.staleOutlines.add(node);
+      }
+    }
+    return applyStyles(this.entry.index, node);
   }
 
   /** Def keys must not collide between two instances of the same symbol with different fills. */
@@ -382,7 +400,13 @@ class Exporter {
    * this instance's overrides and Figma's per-instance derived geometry applied.
    */
   private emitInstance(t: TreeNode, node: NodeChange): void {
-    const resolved = resolveInstance(this.entry.index, t, descend(this.frame ?? new Map(), overrideKeyOf(t)));
+    if (node['overriddenSymbolID'] !== undefined) this.report.seen('instance-swap');
+    const resolved = resolveInstance(
+      this.entry.index,
+      node,
+      descend(this.frame ?? new Map(), overrideIdentity(t)),
+      this.props,
+    );
     if (!resolved) {
       // No symbol in this file (a library component that was never published locally).
       this.report.unsupported('instance-unresolved', t.key);
@@ -395,18 +419,24 @@ class Exporter {
     }
 
     const savedFrame = this.frame;
+    const savedProps = this.props;
     const savedScope = this.defScope;
     this.frame = resolved.records;
+    this.props = resolved.props;
     this.defScope = `${this.defScope}${t.key}~`;
     this.activeSymbols.add(resolved.symbol.key);
     try {
       // The instance's own box: the symbol root with its override applied, overlaid by whatever
-      // the instance itself already carries resolved.
-      const shape = instanceShapeNode(t, resolved.symbol, resolved.records);
+      // the instance itself (as seen in its context) already carries resolved.
+      const shape = applyStyles(
+        this.entry.index,
+        instanceShapeNode(node, resolved.symbol, resolved.records),
+      );
       this.emitOwnContent(t, shape, 'container', resolved.symbol.children);
     } finally {
       this.activeSymbols.delete(resolved.symbol.key);
       this.frame = savedFrame;
+      this.props = savedProps;
       this.defScope = savedScope;
     }
   }
@@ -440,7 +470,7 @@ class Exporter {
       }
       // SVG's default fill-rule is nonzero, so it is only written when the winding is ODD.
       const rule = str(path, 'windingRule') === 'ODD' ? 'evenodd' : undefined;
-      const styled = paintsForStyle(node, num(path, 'styleID'), paintField);
+      const styled = runPaints(this.entry.index, node, num(path, 'styleID'), paintField);
       for (const paint of styled ?? paints) {
         const attrs = paintAttrs(paint, box, this.env, t.key);
         if (!attrs) continue;
@@ -587,6 +617,12 @@ class Exporter {
    * pixels here, so gradient and image fills on text go through the ordinary paint path.
    */
   private emitText(t: TreeNode, node: NodeChange): void {
+    if (this.staleOutlines.has(node)) {
+      // A text property gave this node new words, but no record supplied outlines for them;
+      // the symbol's glyphs would spell the wrong thing (F18).
+      this.report.unsupported('text-property-without-outlines', t.key);
+      return;
+    }
     const draw = buildText(node, (i) => this.blob(i), this.report, t.key);
     if (!draw) {
       if (hasCharactersWithoutOutlines(node)) {
@@ -598,7 +634,7 @@ class Exporter {
     const box = Exporter.box(node);
     const own = objArr(node, 'fillPaints');
     const paintsFor = (styleID: number): readonly KiwiObject[] =>
-      paintsForStyle(node, styleID, 'fillPaints') ?? own;
+      runPaints(this.entry.index, node, styleID, 'fillPaints') ?? own;
 
     for (const run of draw.glyphs) {
       for (const paint of paintsFor(run.styleID)) {

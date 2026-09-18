@@ -37,30 +37,6 @@ function opacityAttr(alpha: number): Attrs {
   return alpha >= 1 ? {} : { 'fill-opacity': alpha };
 }
 
-/**
- * §4.7.5 — a `Path.styleID` selects an entry of the node's `styleOverrideTable`, which carries
- * only the fields that differ from the node's own. Returns undefined when there is no override.
- */
-export function paintsForStyle(
-  node: NodeChange,
-  styleID: number | undefined,
-  field: 'fillPaints' | 'strokePaints',
-): KiwiObject[] | undefined {
-  if (!styleID) return undefined;
-  const tables = [
-    objArr(obj(node, 'vectorData'), 'styleOverrideTable'),
-    objArr(obj(node, 'textData'), 'styleOverrideTable'),
-  ];
-  for (const table of tables) {
-    for (const override of table) {
-      if (num(override, 'styleID') !== styleID) continue;
-      if (!Array.isArray(override[field])) continue;
-      return objArr(override, field);
-    }
-  }
-  return undefined;
-}
-
 // ------------------------------------------------------------------------------- gradients
 
 interface Stop {

@@ -22,6 +22,9 @@ import {
 } from '../../dist/render/path.js';
 import { renderNode, rasterizer } from '../../dist/render/index.js';
 import { isKnownFeature } from '../../dist/render/report.js';
+import { resolveOverridePath } from '../../dist/model/instance.js';
+import { guidKey, type Guid } from '../../dist/model/tree.js';
+import type { KiwiObject } from '../../dist/fig/kiwi.js';
 import { connect, type Harness } from '../fixtures/mcp.ts';
 import { decodePng, inkBounds, pixelAt } from '../visual/lib/png.ts';
 import { svgProblems } from '../visual/lib/svgcheck.ts';
@@ -49,6 +52,38 @@ after(async () => {
 async function png(guid: string, opts: Record<string, unknown> = {}) {
   const result = await renderNode(entry, guid, opts);
   return { result, pixels: decodePng(result.png!) };
+}
+
+type Region = { x: number; y: number; w: number; h: number };
+type Predicate = (r: number, g: number, b: number) => boolean;
+const isDark: Predicate = (r, g, b) => r < 80 && g < 80 && b < 80;
+const isOrange: Predicate = (r, g, b) => r > 200 && g > 100 && g < 180 && b < 60;
+const isNotWhite: Predicate = (r, g, b) => r < 250 || g < 250 || b < 250;
+
+/** Opaque pixels inside `region` (the whole image by default) whose colour satisfies `pred`. */
+function countPixels(p: ReturnType<typeof decodePng>, pred: Predicate, region?: Region): number {
+  const { x, y, w, h } = region ?? { x: 0, y: 0, w: p.width, h: p.height };
+  let n = 0;
+  for (let yy = y; yy < Math.min(p.height, y + h); yy++) {
+    for (let xx = x; xx < Math.min(p.width, x + w); xx++) {
+      const [r, g, b, a] = pixelAt(p, xx, yy);
+      if (a > 128 && pred(r, g, b)) n++;
+    }
+  }
+  return n;
+}
+
+/** Maximal runs of rows (inclusive [from, to]) that contain dark ink within the given columns. */
+function darkBands(p: ReturnType<typeof decodePng>, x0: number, x1: number, y0: number, y1: number) {
+  const bands: [number, number][] = [];
+  let open = false;
+  for (let yy = y0; yy < y1; yy++) {
+    const dark = countPixels(p, isDark, { x: x0, y: yy, w: x1 - x0, h: 1 }) > 0;
+    if (dark && !open) bands.push([yy, yy]);
+    else if (dark) bands[bands.length - 1]![1] = yy;
+    open = dark;
+  }
+  return bands;
 }
 
 describe('R0 — path command blobs (F4)', { skip }, () => {
@@ -699,5 +734,114 @@ describe('R6 — hardening', { skip }, () => {
     assert.ok(report.nodesVisited > 60_000, `${report.nodesVisited} visited`);
     assert.ok(report.unsupported.length > 0, 'and every skipped feature is named');
     assert.ok(report.unsupported.some((u) => u.feature.startsWith('node-type:')));
+  });
+});
+
+// Every guid below is inside frame 863:171055 (SCREEN-A), the frame whose Figma export first
+// showed these defects; the expected values were measured against that export.
+describe('R9 — instance fidelity (F17–F19): identity, properties and styles', { skip }, () => {
+  it('every record in the file addresses a node by identity — overrideKey, else guid (F17)', () => {
+    let records = 0;
+    let guidAddressed = 0;
+    let unresolved = 0;
+    for (const t of entry.index.tree.ordered) {
+      if (t.node['type'] !== 'INSTANCE') continue;
+      const symbolData = t.node['symbolData'] as { symbolOverrides?: KiwiObject[] } | undefined;
+      const derived = (t.node['derivedSymbolData'] as KiwiObject[] | undefined) ?? [];
+      for (const record of [...(symbolData?.symbolOverrides ?? []), ...derived]) {
+        const path = ((record['guidPath'] as { guids?: Guid[] } | undefined)?.guids ?? [])
+          .map((g) => guidKey(g))
+          .filter((g): g is string => g !== undefined);
+        if (path.length === 0) continue;
+        records++;
+        const last = entry.index.node(path[path.length - 1]!);
+        if (last && last.node['overrideKey'] === undefined) guidAddressed++;
+        if (!resolveOverridePath(entry.index, t, path)) unresolved++;
+      }
+    }
+    assert.equal(records, 303_833);
+    // Before the identity fallback every one of these was silently dropped.
+    assert.equal(guidAddressed, 30_061);
+    // What remains are deep nested paths whose intermediate symbol is not in the file.
+    assert.equal(unresolved, 74);
+  });
+
+  it('863:171390 hides the two icons its BOOLEAN properties switch off (F18)', async () => {
+    const { report } = await renderNode(entry, '863:171390', { format: 'svg' });
+    assert.equal(report.nodesDrawn, 2, 'the button and its label; both icon instances are off');
+    assert.ok(report.featuresPresent.includes('instance-property'));
+    assert.deepEqual(report.unsupported, []);
+  });
+
+  it('a card draws the words its guid-addressed override assigns, not the default (F17)', async () => {
+    const first = await renderNode(entry, '863:171089', { format: 'svg' });
+    const second = await renderNode(entry, '863:171090', { format: 'svg' });
+    assert.equal(first.report.nodesDrawn, second.report.nodesDrawn);
+    assert.equal(first.svg.match(/<path /g)?.length, second.svg.match(/<path /g)?.length);
+    assert.notEqual(first.svg, second.svg, 'same structure, different glyphs');
+  });
+
+  it('the input\'s placeholder text is switched off by its property', async () => {
+    const { report } = await renderNode(entry, '863:171326', { format: 'svg' });
+    assert.equal(report.nodesDrawn, 2, 'the box and its (empty) text frame');
+  });
+
+  it('a colour style beats the paint cached beside it (F19)', async () => {
+    // The card icon's override caches #F18D00 but references the "Black" style — Figma's own
+    // export of the frame draws the icon in #333333.
+    const { svg } = await renderNode(entry, '863:171089', { format: 'svg' });
+    assert.ok(svg.includes('fill="#333333"'));
+    assert.ok(!svg.toLowerCase().includes('#f18d00'), 'the stale orange never reaches the SVG');
+  });
+
+  it('a style reference with no cached paints still paints (F19)', async () => {
+    // The time slot's border exists only as styleIdForStrokeFill → "Orange"; the instance's own
+    // strokePaints still cache the component's grey.
+    const { svg } = await renderNode(entry, '863:171166', { format: 'svg' });
+    assert.ok(svg.toLowerCase().includes('#f18d00'));
+    assert.ok(!svg.toLowerCase().includes('#d7d7d7'), 'the stale grey is ignored');
+  });
+
+  it('the whole SCREEN-A frame renders with nothing unsupported or approximated', async () => {
+    const { report } = await renderNode(entry, '863:171055', { format: 'svg', maxSize: 1024 });
+    assert.deepEqual(report.unsupported, []);
+    assert.deepEqual(report.approximated, []);
+    assert.equal(report.nodesDrawn, 618);
+    assert.ok(report.featuresPresent.includes('instance-property'));
+  });
+});
+
+describe('R9 — instance fidelity rasterized', { skip: skipRaster }, () => {
+  it('the CTA button has no icon ink, only its orange fill and white label', async () => {
+    const { pixels } = await png('863:171390', { scale: 1 });
+    assert.equal(pixels.width, 130);
+    assert.equal(countPixels(pixels, isDark), 0, 'no dark printer icon anywhere');
+    assert.ok(countPixels(pixels, isOrange) > 4000);
+  });
+
+  it('the card icon is #333333, the style\'s colour, and never orange', async () => {
+    const { pixels } = await png('863:171089', { scale: 1 });
+    assert.ok(countPixels(pixels, isDark, { x: 108, y: 27, w: 32, h: 32 }) > 150);
+    assert.equal(countPixels(pixels, isOrange), 0);
+  });
+
+  it('the second card is one line of text where the first is two', async () => {
+    const first = (await png('863:171089', { scale: 1 })).pixels;
+    const second = (await png('863:171090', { scale: 1 })).pixels;
+    assert.deepEqual(darkBands(first, 20, 228, 70, 150), [[82, 97], [111, 126]]);
+    assert.deepEqual(darkBands(second, 20, 228, 70, 150), [[96, 111]]);
+  });
+
+  it('a time slot has an orange border, its time, and no icon', async () => {
+    const { result, pixels } = await png('863:171166', { scale: 1 });
+    assert.equal(result.report.nodesDrawn, 2);
+    assert.equal(countPixels(pixels, isOrange, { x: 4, y: 0, w: 44, h: 1 }), 44, 'the whole top edge');
+    assert.ok(countPixels(pixels, isDark) > 0, 'the "10:30" label');
+    assert.equal(countPixels(pixels, isDark, { x: 1, y: 1, w: 6, h: 32 }), 0, 'nothing where the icon sat');
+  });
+
+  it('the input is empty inside its border', async () => {
+    const { pixels } = await png('863:171326', { scale: 1 });
+    assert.equal(countPixels(pixels, isNotWhite, { x: 12, y: 6, w: 160, h: 22 }), 0);
   });
 });
