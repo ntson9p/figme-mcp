@@ -139,7 +139,13 @@ class Exporter {
   constructor(entry: CacheEntry, root: TreeNode, opts: ExportOptions) {
     this.entry = entry;
     this.root = root;
-    this.bounds = new BoundsCache(entry);
+    // Bounds must see nodes as this instance does — a nested instance's box may be resized by
+    // the enclosing one (F20) — so they are computed on the effective node, memoised per scope.
+    this.bounds = new BoundsCache(
+      entry,
+      (t) => this.effective(t),
+      () => this.defScope,
+    );
     const maxNodes = Math.min(opts.maxNodes ?? DEFAULT_MAX_NODES, HARD_MAX_NODES);
     this.maxVisits = Math.min(maxNodes * VISIT_FACTOR, HARD_MAX_VISITS);
     this.collectBoxes = opts.collectBoxes === true;
@@ -559,8 +565,14 @@ class Exporter {
     return this.out.def(this.defKey('clip', t), (id) => {
       const parts = this.shapePaths(node, 'clip');
       if (parts.length === 0) {
+        // No geometry, or geometry dropped as stale (F20): the box with its corner radii.
         const size = nodeSize(node);
-        parts.push(`<rect x="0" y="0" width="${fmt(size.w)}" height="${fmt(size.h)}"/>`);
+        const cmds = roundedRectCommands(size.w, size.h, cornerRadii(node));
+        parts.push(
+          cmds.length
+            ? `<path d="${toPathData(cmds)}"/>`
+            : `<rect x="0" y="0" width="${fmt(size.w)}" height="${fmt(size.h)}"/>`,
+        );
       }
       return `<clipPath id="${id}" clipPathUnits="userSpaceOnUse">${parts.join('')}</clipPath>`;
     });

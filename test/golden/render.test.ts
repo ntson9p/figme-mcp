@@ -845,3 +845,36 @@ describe('R9 — instance fidelity rasterized', { skip: skipRaster }, () => {
     assert.equal(countPixels(pixels, isNotWhite, { x: 12, y: 6, w: 160, h: 22 }), 0);
   });
 });
+
+describe('R9 — nested instances are measured in their context (F20)', { skip }, () => {
+  it('the grey panel\'s mask spans the instance, not the 1240x180 symbol behind it', async () => {
+    // "bg copy 5" is a 1052x503 instance of a 1240x180 symbol whose colour swatch is a nested
+    // instance of a 32x32 symbol. Every box on the way is resized by a record, and the mask
+    // region used to be measured on the raw symbol nodes — 1240x180 — so the panel stopped at
+    // row 180 and the white cards below became invisible on the page.
+    const { svg, bounds, report } = await renderNode(entry, '863:171102', { format: 'svg' });
+    assert.deepEqual(bounds, { x: 0, y: 0, w: 1052, h: 503 });
+    assert.match(svg.match(/<mask [^>]*>/)![0], /width="1052" height="503"/);
+    assert.deepEqual(report.approximated, [], 'the box is rebuilt from size exactly, no guess');
+    assert.deepEqual(report.unsupported, []);
+  });
+});
+
+describe('R9 — nested instances rasterized (F20)', { skip: skipRaster }, () => {
+  it('the grey panel is painted all the way down', async () => {
+    const { pixels } = await png('863:171102', { scale: 1 });
+    assert.equal(pixels.height, 503);
+    const isPanelGrey: Predicate = (r, g, b) => r === 248 && g === 248 && b === 248;
+    assert.ok(
+      countPixels(pixels, isPanelGrey, { x: 0, y: 400, w: 1052, h: 100 }) > 100_000,
+      'the bottom hundred rows are grey, not cut off at 180',
+    );
+    assert.equal(inkBounds(pixels)!.y1, 502);
+  });
+
+  it('the NO IMAGE card keeps its white face at the instance size', async () => {
+    const { pixels } = await png('863:171107', { scale: 1 });
+    const isWhite: Predicate = (r, g, b) => r > 250 && g > 250 && b > 250;
+    assert.ok(countPixels(pixels, isWhite, { x: 0, y: 0, w: 229, h: 280 }) > 60_000);
+  });
+});

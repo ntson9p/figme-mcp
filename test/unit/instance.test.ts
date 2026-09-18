@@ -77,6 +77,22 @@ test('mergeNode merges property assignments per definition instead of replacing 
   assert.deepEqual(list.map((a) => a.value), [{ textValue: { characters: 'old' } }, { boolValue: false }]);
 });
 
+test('mergeNode drops geometry a resizing record did not re-derive (F20)', () => {
+  const base = { size: { x: 1240, y: 180 }, fillGeometry: [{ commandsBlob: 1 }], strokeGeometry: [{ commandsBlob: 2 }] };
+  const resized = mergeNode(base, { size: { x: 1052, y: 503 } });
+  assert.equal('fillGeometry' in resized, false, 'the 1240x180 outline cannot describe a 1052x503 box');
+  assert.equal('strokeGeometry' in resized, false);
+
+  const withGeometry = mergeNode(base, { size: { x: 1052, y: 503 }, fillGeometry: [{ commandsBlob: 3 }] });
+  assert.deepEqual(withGeometry['fillGeometry'], [{ commandsBlob: 3 }]);
+  assert.equal('strokeGeometry' in withGeometry, false, 'only the field the record supplies survives');
+
+  const sameSize = mergeNode(base, { size: { x: 1240, y: 180 }, visible: false });
+  assert.deepEqual(sameSize['fillGeometry'], base.fillGeometry, 'an unchanged size keeps the outline');
+  const noSize = mergeNode(base, { opacity: 0.5 });
+  assert.deepEqual(noSize['fillGeometry'], base.fillGeometry);
+});
+
 // ------------------------------------------------------------------------------ applyProps
 
 const refs = (defID: string, field: string) => [{ defID: guid(defID), componentPropNodeField: field }];
@@ -244,6 +260,26 @@ test('instanceShapeNode takes the instance\'s paints together with its style ref
   assert.equal('styleIdForFill' in out, false, 'a detached fill must not fall back to the symbol\'s style');
   assert.deepEqual(out['transform'], instance.transform);
   assert.equal(out['type'], 'INSTANCE');
+});
+
+test('instanceShapeNode rebuilds the box of a resized nested instance from its size (F20)', () => {
+  // A 32x32 colour-swatch symbol stretched to 229x280 by the enclosing instance: the symbol
+  // root's 32x32 outline must not become the clip of a 229x280 box.
+  const symbol = tree('2:1314', { type: 'SYMBOL', size: { x: 32, y: 32 }, fillGeometry: [{ commandsBlob: 9 }] });
+  const stretched = instanceShapeNode(
+    { type: 'INSTANCE', size: { x: 229.5, y: 280 }, transform: {} },
+    symbol,
+    new Map(),
+  );
+  assert.equal('fillGeometry' in stretched, false);
+  assert.deepEqual(stretched['size'], { x: 229.5, y: 280 });
+
+  const own = instanceShapeNode(
+    { type: 'INSTANCE', size: { x: 229.5, y: 280 }, fillGeometry: [{ commandsBlob: 10 }], transform: {} },
+    symbol,
+    new Map(),
+  );
+  assert.deepEqual(own['fillGeometry'], [{ commandsBlob: 10 }], 'an instance\'s own outline is already resolved');
 });
 
 test('instanceShapeNode applies the symbol root\'s own override record', () => {

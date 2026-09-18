@@ -3,7 +3,9 @@
  * The resolution itself — records, identities, property assignments — lives in
  * `model/instance.ts`, shared with `fig_instance`, and is re-exported here for the exporter.
  */
+import type { KiwiObject } from '../fig/kiwi.js';
 import type { NodeChange } from '../fig/parse.js';
+import { num, obj } from '../model/access.js';
 import { overrideIdentity, type TreeNode } from '../model/tree.js';
 import { mergeNode, type OverrideRecords } from '../model/instance.js';
 
@@ -47,10 +49,19 @@ const PAINT_UNITS = [
   ['strokePaints', 'styleIdForStrokeFill'],
 ] as const;
 
+function sizeDiffers(a: KiwiObject | undefined, b: KiwiObject | undefined): boolean {
+  if (!a || !b) return false;
+  return (
+    Math.abs((num(a, 'x') ?? 0) - (num(b, 'x') ?? 0)) > 1e-3 ||
+    Math.abs((num(a, 'y') ?? 0) - (num(b, 'y') ?? 0)) > 1e-3
+  );
+}
+
 /**
  * How the instance's own box should be drawn: the symbol root with its override applied, then
  * any of the shape fields the instance itself carries (13 835 instances have their own
- * `fillGeometry`, already resolved). `instance` is the node as seen in its context.
+ * `fillGeometry`, already resolved). `instance` is the node as seen in its context — for a
+ * nested instance that is the merged node, whose `size` the enclosing instance may have changed.
  */
 export function instanceShapeNode(
   instance: NodeChange,
@@ -67,6 +78,12 @@ export function instanceShapeNode(
     out[paints] = instance[paints];
     if (instance[style] !== undefined) out[style] = instance[style];
     else delete out[style];
+  }
+  // Geometry inherited from the symbol root describes the symbol's size, not this instance's
+  // (F20); the box is rebuilt from `size` instead.
+  if (sizeDiffers(obj(base, 'size'), obj(instance, 'size'))) {
+    if (instance['fillGeometry'] === undefined) delete out['fillGeometry'];
+    if (instance['strokeGeometry'] === undefined) delete out['strokeGeometry'];
   }
   // The instance's own transform is already applied by its group; never take the symbol's.
   out['transform'] = instance['transform'];

@@ -2,7 +2,9 @@
  * Content and render bounds in node-local coordinates (plan §4.5).
  *
  * `contentBounds` is the ink; `renderBounds` adds the margin an effect needs. Both are memoised
- * per node, so a page subtree is walked once per render rather than once per parent.
+ * per node AND instance scope, so a page subtree is walked once per render rather than once per
+ * parent, while the same symbol node measured under two instances — which may size it
+ * differently (F20) — gets two entries.
  *
  * The effect-margin rule is the initial one from the plan. Fixture `cf-effect-drop-shadow`
  * calibrates it against Figma's own export size: this is the ONE function to change, and the
@@ -35,13 +37,33 @@ export interface Margins {
 
 const NO_MARGIN: Margins = { left: 0, top: 0, right: 0, bottom: 0 };
 
+/** How a tree node looks in the current context — inside an instance, merged with its records. */
+export type EffectiveNode = (t: TreeNode) => NodeChange;
+
 export class BoundsCache {
   private readonly entry: CacheEntry;
-  private readonly content = new Map<TreeNode, Box | null>();
-  private readonly render = new Map<TreeNode, Box | null>();
+  private readonly effective: EffectiveNode;
+  private readonly scope: () => string;
+  private readonly content = new Map<string, Box | null>();
+  private readonly render = new Map<string, Box | null>();
 
-  constructor(entry: CacheEntry) {
+  /**
+   * `effective` is the node as the exporter sees it right now and `scope` names the chain of
+   * instances it is being drawn under. A symbol's node has one effective shape per instance
+   * that expands it, so memo entries are keyed by scope and node together.
+   */
+  constructor(
+    entry: CacheEntry,
+    effective: EffectiveNode = (t) => t.node,
+    scope: () => string = () => '',
+  ) {
     this.entry = entry;
+    this.effective = effective;
+    this.scope = scope;
+  }
+
+  private key(t: TreeNode): string {
+    return `${this.scope()}${t.key}`;
   }
 
   private blob(index: number | undefined): Uint8Array | undefined {
@@ -79,21 +101,23 @@ export class BoundsCache {
   private childrenBounds(children: readonly TreeNode[]): Box | undefined {
     let box: Box | undefined;
     for (const child of children) {
-      if (!isVisible(child.node)) continue;
+      const childNode = this.effective(child);
+      if (!isVisible(childNode)) continue;
       const childBox = this.renderBounds(child);
       if (!childBox) continue;
-      box = unionBox(box, transformBox(fromFigma(obj(child.node, 'transform')), childBox));
+      box = unionBox(box, transformBox(fromFigma(obj(childNode, 'transform')), childBox));
     }
     return box;
   }
 
   contentBounds(t: TreeNode): Box | undefined {
-    const memo = this.content.get(t);
+    const key = this.key(t);
+    const memo = this.content.get(key);
     if (memo !== undefined) return memo ?? undefined;
     // Guard against a cyclic parent chain in a damaged file.
-    this.content.set(t, null);
+    this.content.set(key, null);
 
-    const node = t.node;
+    const node = this.effective(t);
     let box: Box | undefined;
     if (nodeType(node) !== 'CANVAS') {
       const size = nodeSize(node);
@@ -113,25 +137,26 @@ export class BoundsCache {
       box = unionBox(box, this.childrenBounds(t.children));
     }
 
-    this.content.set(t, box ?? null);
+    this.content.set(key, box ?? null);
     return box;
   }
 
   /** Per-side margin the node's visible effects need beyond its content. */
   effectMargins(t: TreeNode): Margins {
-    return effectMargins(t.node);
+    return effectMargins(this.effective(t));
   }
 
   renderBounds(t: TreeNode): Box | undefined {
-    const memo = this.render.get(t);
+    const key = this.key(t);
+    const memo = this.render.get(key);
     if (memo !== undefined) return memo ?? undefined;
-    this.render.set(t, null);
+    this.render.set(key, null);
 
     const content = this.contentBounds(t);
     if (!content) return undefined;
-    const m = effectMargins(t.node);
+    const m = effectMargins(this.effective(t));
     const box = m === NO_MARGIN ? content : expandBox(content, m.left, m.top, m.right, m.bottom);
-    this.render.set(t, box);
+    this.render.set(key, box);
     return box;
   }
 

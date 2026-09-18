@@ -27,7 +27,7 @@ import type { KiwiObject } from '../fig/kiwi.js';
 import type { NodeChange } from '../fig/parse.js';
 import type { FileIndex } from './index.js';
 import { guidKey, overrideIdentity, type Guid, type TreeNode } from './tree.js';
-import { bool, obj, objArr, str } from './access.js';
+import { bool, num, obj, objArr, str } from './access.js';
 
 /** Addressing fields that must never be merged into a node as content. */
 const OVERRIDE_META = new Set(['guidPath', 'overrideLevel', 'guid', 'phase', 'parentIndex']);
@@ -72,13 +72,32 @@ function mergeAssignments(base: unknown, patch: unknown): KiwiObject[] {
   return [...out.values()];
 }
 
-/** `{ ...base, ...patch }` minus the addressing fields. */
+function sizeDiffers(a: KiwiObject | undefined, b: KiwiObject | undefined): boolean {
+  if (!a || !b) return false;
+  return (
+    Math.abs((num(a, 'x') ?? 0) - (num(b, 'x') ?? 0)) > 1e-3 ||
+    Math.abs((num(a, 'y') ?? 0) - (num(b, 'y') ?? 0)) > 1e-3
+  );
+}
+
+/**
+ * `{ ...base, ...patch }` minus the addressing fields.
+ *
+ * Figma re-derives geometry only for nodes that paint something (F20): of the sample's 22 097
+ * resized painted nodes, 18 lack it. A record that resizes a node without supplying geometry
+ * therefore leaves the base geometry describing the OLD size — the 1240x180 symbol behind a
+ * 1052x503 panel — so it is dropped and the exporter rebuilds the box from `size` (§4.14).
+ */
 export function mergeNode(base: NodeChange, patch: KiwiObject | undefined): NodeChange {
   if (!patch) return base;
   const out: NodeChange = { ...base };
   for (const [k, v] of Object.entries(patch)) {
     if (OVERRIDE_META.has(k)) continue;
     out[k] = k === 'componentPropAssignments' ? mergeAssignments(base[k], v) : v;
+  }
+  if (sizeDiffers(obj(base, 'size'), obj(patch, 'size'))) {
+    if (patch['fillGeometry'] === undefined) delete out['fillGeometry'];
+    if (patch['strokeGeometry'] === undefined) delete out['strokeGeometry'];
   }
   return out;
 }
