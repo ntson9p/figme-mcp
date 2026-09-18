@@ -2,7 +2,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { FileCache, type CacheEntry } from '../../../dist/cache.js';
-import { renderNode, rasterize, type RenderReport, type NodeBox } from '../../../dist/render/index.js';
+import {
+  HARD_MAX_SIZE,
+  renderNode,
+  rasterize,
+  type RenderReport,
+  type NodeBox,
+} from '../../../dist/render/index.js';
 import { attribute, type Attribution } from './attribute.ts';
 import { compare, diffMask, type CompareResult } from './compare.ts';
 import {
@@ -74,10 +80,10 @@ async function level2(
 ): Promise<LevelResult> {
   const notes: string[] = [];
 
-  const expectedW = Math.max(1, Math.round(report.bounds.w * report.scale));
-  const expectedH = Math.max(1, Math.round(report.bounds.h * report.scale));
-  if (ours.width !== expectedW || ours.height !== expectedH) {
-    notes.push(`PNG is ${ours.width}x${ours.height} but the report says ${expectedW}x${expectedH}`);
+  // The report's own width/height, not bounds × scale: `scale` is rounded for the report, and a
+  // 3026-row frame rendered under a size cap lands one row off when recomputed from it.
+  if (ours.width !== report.width || ours.height !== report.height) {
+    notes.push(`PNG is ${ours.width}x${ours.height} but the report says ${report.width}x${report.height}`);
   }
 
   const ink = inkBounds(ours);
@@ -88,7 +94,7 @@ async function level2(
   // Rendering at half the scale and doubling must land in the same place.
   if (scale >= 2) {
     try {
-      const half = await renderNode(entry, guid, { scale: scale / 2 });
+      const half = await renderNode(entry, guid, { scale: scale / 2, maxSize: HARD_MAX_SIZE });
       if (half.png) {
         const result = compare(decodePng(half.png), ours, { downscale: true });
         if (result.status !== 'ok') {
@@ -188,7 +194,13 @@ async function runFrame(
   let boxes: readonly NodeBox[] = [];
 
   try {
-    const rendered = await renderNode(entry, frame.guid, { scale: frame.scale, collectBoxes: true });
+    // An oracle comparison needs the export's own scale: the tool's default 1568 px cap would
+    // shrink a tall frame to something its export can never match.
+    const rendered = await renderNode(entry, frame.guid, {
+      scale: frame.scale,
+      maxSize: HARD_MAX_SIZE,
+      collectBoxes: true,
+    });
     report = rendered.report;
     boxes = rendered.boxes ?? [];
 

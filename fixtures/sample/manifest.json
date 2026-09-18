@@ -1,6 +1,6 @@
 {
-  "note": "Hand-picked frames from the development asset. No Figma exports, so only levels 1-2 and the coverage scan run. Recreate design.fig with: cp figma-input/sample.fig fixtures/sample/design.fig",
-  "exportedAt": "2026-09-02T00:00:00Z",
+  "note": "Hand-picked frames from the development asset. Only 863:171055 ships a Figma export (a 1x PNG, no SVG), so level 4 runs for that frame alone; the others get levels 1-2 and the coverage scan. Recreate design.fig with: cp figma-input/sample.fig fixtures/sample/design.fig",
+  "exportedAt": "2026-09-18T00:00:00Z",
   "frames": [
     { "guid": "2:1558", "name": "rounded rectangle — path decoding" },
     { "guid": "2:1339", "name": "tab frame — inside stroke, clip, text, instances" },
@@ -13,6 +13,7 @@
     { "guid": "2:7389", "name": "Dynamic Island — drop shadow" },
     { "guid": "2:1327", "name": "arrow symbol — OUTLINE mask" },
     { "guid": "2:1401", "name": "tab instance — nested instance and overrides" },
-    { "guid": "2:7098", "name": "status bar — emoji and mixed runs" }
+    { "guid": "2:7098", "name": "status bar — emoji and mixed runs" },
+    { "guid": "863:171055", "name": "SCREEN-A — instance-heavy form, the first real Figma oracle (F17–F21)" }
   ]
 }

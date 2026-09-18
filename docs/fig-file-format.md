@@ -218,16 +218,27 @@ Keyed nodes in the sample: 414 total — `VARIABLE` 272, `ROUNDED_RECTANGLE` 103
 `VARIABLE_SET` 26, `BRUSH` 25. So a style used from the *same* file resolves to a real node and
 therefore to real values; only styles published from another library stay opaque.
 
-### 7.2 Instance override paths address descendants by `overrideKey`, not by `guid`
+### 7.2 Instance override paths address descendants by override identity: `overrideKey`, else `guid`
 
 `symbolData.symbolOverrides[].guidPath.guids` (and the same field on `derivedSymbolData`) holds
-values that match a node's **`overrideKey`** field, not its `guid`. Looking them up as guids
-finds nothing. In the sample 10,786 nodes carry an `overrideKey` but only 7,860 keys are unique,
-because every duplicate of a component repeats its component's keys — so resolution must prefer
-the candidate that lies inside the symbol the instance actually points at.
+a node's **`overrideKey`** when the node has one, and its plain **`guid`** otherwise. A node
+created by copying a component — a library import, a duplicate — keeps the original's key in
+`overrideKey`; a node created in place carries no such field. In the sample 8,893 of 10,480
+symbol descendants have an explicit key and 30,061 of the 303,833 records address a node by
+guid. (The first version of this note, written 2026-08-31, said the guid case did not exist; a
+renderer built on it silently dropped every override of every component created in the file
+itself. Corrected 2026-09-18.) Keys are not unique: every duplicate of a component repeats its
+component's keys (10,786 nodes, 7,860 distinct keys), so resolution must prefer the candidate
+that lies inside the symbol the instance actually points at; a guid is unique by construction.
 
-Example: instance `2:1329` → symbol `2:1325`, override path `["0:2528"]` → the node whose
-`overrideKey` is `0:2528` **within** `2:1325`'s subtree, i.e. `2:1325` itself.
+Examples: instance `2:1329` → symbol `2:1325`, path `["0:2528"]` → the node whose `overrideKey` is
+`0:2528` **within** `2:1325`'s subtree, i.e. `2:1325` itself. Instance `863:171090` → symbol
+`2:251108`, path `["2:251114"]` → the TEXT node `2:251114`, which has no `overrideKey`.
+
+A multi-segment path is walked one instance level at a time, and a segment that lands on a
+nested INSTANCE continues inside the symbol that instance *resolves to* — after the enclosing
+level's records and property assignments, which may have swapped it (§8.6). Walking the
+original symbol instead leaves 15,858 records unresolved; walking the swapped one leaves 74.
 
 ### 7.3 Component-set properties live on the set, not on the variants
 
@@ -336,11 +347,63 @@ SYMBOL named by `symbolData.symbolID`, and two record sets on the instance suppl
 - `derivedSymbolData[]` — what Figma recomputed as a result (226 886 records carrying resolved
   `size`, `transform`, `fillGeometry`, `strokeGeometry` and `derivedTextData`).
 
-Both are addressed by `guidPath.guids`, a path of **overrideKeys** (see §7.2) that counts
-**instance-nesting levels, not node depth**: one segment addresses a node anywhere inside this
-instance's own symbol (69 748 of the records), and `[a, b]` addresses overrideKey `b` inside the
-nested instance `a`. 1 232 of the 2 046 symbols contain nested instances.
+Both are addressed by `guidPath.guids`, a path of **override identities** (`overrideKey`, else
+`guid`; see §7.2) that counts **instance-nesting levels, not node depth**: one segment addresses
+a node anywhere inside this instance's own symbol (69 748 of the records), and `[a, b]`
+addresses identity `b` inside the nested instance `a`. 1 232 of the 2 046 symbols contain
+nested instances.
 
 Consequence for any consumer: an instance's `size` is authoritative and usually differs from its
 symbol's. Instance `2:1340` is 16×16 and points at a 22×22 symbol, so measuring an instance by
 walking its symbol's children gives the wrong answer.
+
+### 8.6 Component properties are assignments to evaluate, not records to read
+
+An instance stores `componentPropAssignments[] { defID, value: { textValue | boolValue |
+guidValue } }`; the symbol's descendants store `componentPropRefs[] { defID,
+componentPropNodeField: VISIBLE | TEXT_DATA | OVERRIDDEN_SYMBOL_ID }` (2 178 nodes; the newer
+`parameterConsumptionMap` repeats the same bindings on the same nodes). In the sample 14 373 of
+38 164 instances assign something — 35 578 BOOLEAN, 14 051 TEXT and 2 029 INSTANCE_SWAP values.
+**None of the 29 877 BOOLEAN=false assignments is mirrored by a `visible:false` record**: the
+only way to know an icon is switched off is to find its `VISIBLE` binding and look the
+assignment up. Without an assignment the symbol's own state is the default. A record may carry
+`componentPropAssignments` for a nested instance (2 591 records), and 1 251 of those lists are
+partial, so assignments must be merged per `defID`. A text assignment normally comes with a
+derived record holding the new glyphs (11 907 of 12 584 direct bindings; the rest are nested
+and served by the enclosing instance). A swap names the symbol by `guidValue`, or in a record by
+`overriddenSymbolID` (1 677 records); 2 027 of the 2 029 swap targets are local symbols.
+
+### 8.7 A style reference is live; the paints cached beside it are not
+
+`styleIdForFill`, `styleIdForStrokeFill` and `styleIdForEffect` occur on nodes, on override
+records and on `styleOverrideTable` entries, always next to a cached copy of the style's
+value. The copy is what the node looked like when last touched: on 1 779 nodes and 1 064
+records it disagrees with the local style it references (the version on the reference matches
+the style's current version in 956 of the node cases, so this is not a stale library link), and
+3 905 records plus 265 text-run entries carry the reference with no paints at all. Figma draws
+the style. Measured on frame `863:171055`: the card icon is #333333 in Figma's export — the
+"Black" style — while the override record caches #F18D00 with a variable alias; the time slots'
+orange border exists only as `styleIdForStrokeFill` on the instance whose `strokePaints` still
+say #D7D7D7. A detached style is written as the sentinel `{ guid: 4294967295:4294967295 }`, and
+an instance whose root fill was detached carries its own paints with no reference at all (133).
+
+### 8.8 The enclosing instance sizes nested instances; unpainted nodes get no new geometry
+
+25 266 of the 40 855 nested instances with a derived `size` are resized by the instance that
+contains them, 23 547 of them without a derived `fillGeometry`. Figma re-derives geometry only
+for nodes that paint something: of 22 097 resized nodes with a visible fill or stroke, 18 lack
+it. So a record that changes `size` without geometry leaves the base node's outline describing
+the old size, and anything measured on the raw symbol tree — a mask region, a clip, a render
+box — is the symbol's size. Frame `863:171055`'s grey panel `863:171102` is a 1052×503 instance
+of a 1240×180 symbol whose colour swatch is a nested instance of a 32×32 symbol; every box on
+the way is resized by a record.
+
+### 8.9 Text truncation counts glyphs, and run styles live on the characters
+
+`derivedTextData.truncationStartIndex` is an index into `glyphs`, not into `characters`: the
+glyphs from that index on are the cut tail, and the glyph just before it — the only one with
+no `firstCharacter` — is the ellipsis Figma inserted (920 of 920 truncated texts in the sample;
+`truncatedHeight` is the height of what remains). A glyph's `styleID` is never set for a styled
+run (12 576 of 12 576 such glyphs); the run of a glyph is `textData.characterStyleIDs[
+firstCharacter]`, one entry per character with an implicit 0 past the end of the array (413
+texts store a full array, 101 a shorter one, none a longer one).

@@ -192,7 +192,9 @@ did not cover this and an exporter without it renders almost nothing). **All 38 
 nodes in the sample have zero children**, and all 38 164 resolve to a SYMBOL that is present in
 the file. On a real page — `0:1` — INSTANCE is the most common type by far: 7 104 of 14 912
 nodes. Two record sets on the instance supply the rest, both addressed by `guidPath.guids`,
-a path of **overrideKeys** (not guids, not node paths):
+a path of **override identities** — a node's `overrideKey` when it has one, else its guid
+(corrected 2026-09-18: the first version of this fact said "overrideKeys, not guids", and the
+exporter built on it dropped 30 061 records; see pitfall 21):
 
 * `symbolData.symbolOverrides` — what the user changed. 76 947 records; the commonest fields are
   `size` (34 505), `fillPaints` (26 472), auto-layout fields, `textData`, `fontSize`, `visible`.
@@ -202,9 +204,9 @@ a path of **overrideKeys** (not guids, not node paths):
 
 `guidPath` counts **instance-nesting levels, not node depth**: a one-segment path (69 748 of
 76 947) addresses a node anywhere inside this instance's own symbol, and `[a, b]` addresses the
-node with overrideKey `b` inside the nested instance with overrideKey `a`. 1 232 of 2 046
+node with identity `b` inside the nested instance with identity `a`. 1 232 of 2 046
 symbols contain nested instances, so the nesting case is normal, not exotic. The symbol's own
-root carries an overrideKey too, and the record at that path is the instance's own appearance.
+root has an identity too, and the record at that path is the instance's own appearance.
 
 Consequences, implemented in §4.4: an INSTANCE draws the symbol's children with
 `mergeNode(symbolNode, record)` applied per descendant (derived wins over user overrides, and an
@@ -212,6 +214,56 @@ enclosing instance wins over a nested one); a recursion guard is needed; and —
 **`contentBounds` of an INSTANCE must NOT descend into the symbol**, because the symbol's own
 children are the symbol's size, not the instance's. Instance `2:1340` is 16×16 and points at a
 22×22 symbol; descending renders it at 22×22 with the icon in the corner.
+
+**F18 — Component properties are evaluated, never materialised** (measured 2026-09-18 on frame
+`863:171055` "SCREEN-A" against Figma's own export of it; F18–F21 all come from that comparison).
+An instance carries `componentPropAssignments[] { defID, value: { textValue | boolValue |
+guidValue } }`; a symbol descendant bound to a property carries `componentPropRefs[] { defID,
+componentPropNodeField: VISIBLE | TEXT_DATA | OVERRIDDEN_SYMBOL_ID }` (the newer
+`parameterConsumptionMap` says the same thing on the same 2 178 nodes). 14 373 of 38 164
+instances assign something: 35 578 BOOLEAN, 14 051 TEXT, 2 029 INSTANCE_SWAP values; bound nodes
+are VISIBLE 1 461, TEXT_DATA 573, OVERRIDDEN_SYMBOL_ID 414. **Not one of the 29 877 BOOLEAN=false
+assignments is mirrored by a `visible:false` record**, so an icon a property switches off is only
+off if the assignment is evaluated. Without an assignment the symbol's own state already is the
+default (108 of the 108 bindings whose default is recorded agree). A record may reassign a
+nested instance's properties (`componentPropAssignments` inside a record, 2 591 of them) and
+1 251 of those lists are partial, so assignments merge per `defID`. A text assignment comes
+with a derived record carrying the new glyphs (11 907 of 12 584 direct bindings; the rest are
+nested and served by the enclosing instance's records); without one the node is reported as
+`text-property-without-outlines` rather than drawn with the symbol's glyphs. A swap names the
+symbol by `guidValue` (2 027 of 2 029 are local) or, in a record, by `overriddenSymbolID`
+(1 677). No PROP_REF chains occur in the sample. Implemented in `src/model/instance.ts`,
+shared by the exporter and `fig_instance`.
+
+**F19 — A referenced style is the live source of its paints.** `styleIdForFill`,
+`styleIdForStrokeFill` and `styleIdForEffect` appear on nodes, on override records and on
+`styleOverrideTable` entries, and the `fillPaints`/`strokePaints`/`effects` cached beside them
+are only what the node looked like when it was last touched: 1 779 nodes and 1 064 records
+disagree with their style, and 3 905 records plus 265 text-run entries carry the reference with
+no paints at all. Figma draws the style — pixel-measured: the SCREEN-A card icon is #333333 in the
+export, the "Black" style, while the override's cached paint says #F18D00 — and the time slots'
+orange border exists only as a stroke-style reference. Styles not in the file (4 487 records)
+and the detached-style sentinel `4294967295:4294967295` cannot be followed and keep the cache.
+An instance whose root fill was detached carries its own paints and no reference (133 of them,
+all a different colour from the style), so paints and reference travel as one unit.
+
+**F20 — The enclosing instance sizes nested instances, and only painted nodes get new
+geometry.** 25 266 of the 40 855 nested instances with a derived `size` are resized by the
+instance that contains them, 23 547 of those with no derived `fillGeometry` for the box. Figma
+re-derives geometry only for nodes that paint something: of 22 097 resized painted nodes, 18
+lack it. Two consequences: a record that resizes a node without geometry leaves the OLD outline
+behind, which is dropped so the box is rebuilt from `size` and the corner radii; and bounds,
+mask regions and clips must be measured on the effective node, memoised per (instance scope,
+node). SCREEN-A's panel `863:171102` is a 1052×503 instance of a 1240×180 symbol; measured on the
+raw tree its `<mask>` came out 1240×180 and the panel stopped at row 180.
+
+**F21 — Text truncation and run styles.** `derivedTextData.truncationStartIndex` indexes the
+GLYPH array, not the characters: the glyphs from that index on are the cut tail, and the glyph
+just before it — the one without `firstCharacter` — is the ellipsis Figma inserted (920 of 920
+truncated texts). A glyph's `styleID` is never set for a styled run (12 576 of 12 576 styled
+glyphs); the run is `textData.characterStyleIDs[firstCharacter]`, one entry per character with
+an implicit 0 past the end of the array (413 texts have a full array, 101 a shorter one, none a
+longer one).
 
 **F15 — Existing APIs to reuse** (do not duplicate): `FileCache.get(file): CacheEntry
 { fig, index }`, `FileIndex.node(guid)`, `FileIndex.subtreeRange(root)`, `TreeNode
@@ -417,7 +469,9 @@ allowed (whole page).
 
 The exporter is a class holding: the `CacheEntry`, the `SvgWriter`, the `RenderReport`, the
 bounds memo, an image data-URI cache, the render mode (`'normal' | 'outline-white'`, §4.10),
-and a visited counter checked against `maxNodes`.
+the active instance frame — the enclosing instance's records and property assignments, through
+which every node is seen (`effective(t)`, F17–F19) — and a visited counter checked against
+`maxNodes`.
 
 Skeleton (pseudocode; every branch is normative):
 
@@ -461,7 +515,7 @@ emitPaths(t, field, paints):                         // one <path> per (geometry
      cmds = decode(path)                              // catch → report 'geometry:corrupt', continue
      if cmds is empty: continue
      d = toPathData(cmds); rule = str(path,'windingRule') == 'ODD' ? 'evenodd' : 'nonzero'
-     ps = path.styleID ? paintsForStyle(t, path.styleID, field) ?? paints : paints   // §4.7.5
+     ps = path.styleID ? runPaints(t, path.styleID, field) ?? paints : paints   // §4.7.5
      for paint in ps (index 0 first):
         attrs = paintAttrs(paint, box(t), t)          // §4.7; undefined → invisible or unsupported (already reported)
         if attrs: out.element('path', { d, 'fill-rule': rule, ...attrs })
@@ -489,7 +543,10 @@ Two memoised functions per `TreeNode`, in node-local coordinates:
   types add nothing. This is the initial rule; fixture `cf-effect-drop-shadow` calibrates it
   against Figma's export size (one function to change, one golden value to update).
 
-Memoise in a `Map<TreeNode, Box>`; a page subtree is computed once per render.
+Memoise per (instance scope, node), not per `TreeNode` alone, and measure the **effective** node
+(the tree node merged with the enclosing instance's records): the same symbol node has a
+different size under each instance that expands it (F20). A page subtree is still computed once
+per render.
 
 ### 4.6 Clipping (`export.ts`)
 
@@ -561,11 +618,14 @@ Return `{ fill: 'url(#patternId)' }`.
 **4.7.4 Other paint types.** VIDEO: draw its `image` (poster) if present, else nothing; report
 `paint:VIDEO`. EMOJI, PATTERN, NOISE, CUSTOM: report `paint:<TYPE>` as unsupported, draw nothing.
 
-**4.7.5 Per-region styles.** `paintsForStyle(t, styleID, field)`: search
+**4.7.5 Per-region styles.** `runPaints(index, t, styleID, field)` (`style.ts`): search
 `vectorData.styleOverrideTable[]` (for TEXT: `textData.styleOverrideTable[]`) for an entry
-whose `styleID` equals the path's, and return its `fillPaints` (for `fillGeometry`) or
-`strokePaints` (for `strokeGeometry`) if that entry has the field; otherwise `undefined`
-(caller uses the node's paints).
+whose `styleID` equals the path's. If the entry names a local colour style
+(`styleIdForFill` / `styleIdForStrokeFill`) return that style's paints (F19 — 265 of the
+sample's 817 text-run entries carry only the reference); else return the entry's `fillPaints`
+(for `fillGeometry`) or `strokePaints` (for `strokeGeometry`) if it has the field; otherwise
+`undefined` (caller uses the node's paints). The node's own paints have already been through
+`applyStyles` (F19) by the time they reach here.
 
 ### 4.8 Text (`text.ts`)
 
@@ -573,15 +633,19 @@ whose `styleID` equals the path's, and return its `fillPaints` (for `fillGeometr
 emitText(t):
   dtd = obj(n,'derivedTextData'); glyphs = objArr(dtd,'glyphs')
   if !dtd or glyphs.length == 0: if textData.characters is non-empty: report 'text-without-outlines'; return
+  cut = num(dtd,'truncationStartIndex')         // F21: an index into `glyphs`, -1 when nothing is cut
+  runs = arr(textData,'characterStyleIDs') ?? []  // F21: one entry per character, 0 past the end
   groups = Map<styleID, string[]>              // path data per style, node-local px (transform baked in, F5)
-  for g in glyphs:
+  for (i, g) in glyphs:
+     if cut >= 0 and i >= cut: break            // the tail; glyphs[cut-1] is the ellipsis, and IS drawn
      if arr(g,'emojiCodePoints')?.length: report.approximated('emoji', t.key); continue
      if (num(g,'rotation') ?? 0) != 0: report.approximated('glyph-rotation', t.key)   // still drawn, unrotated
      fs = num(g,'fontSize'); p = obj(g,'position'); m = { a: fs, b: 0, c: 0, d: -fs, e: p.x, f: p.y }
      cmds = decode(blob(g.commandsBlob)); if empty: continue
+     styleID = runs[g.firstCharacter] ?? g.styleID ?? 0   // never g.styleID first: it is unset on styled runs
      groups.get(styleID).push(toPathData(cmds, m))
   for (styleID, ds) in groups:
-     paints = paintsForStyle(t, styleID, 'fillGeometry') ?? objArr(n,'fillPaints')
+     paints = runPaints(index, t, styleID, 'fillPaints') ?? objArr(n,'fillPaints')
      for paint in paints: attrs = paintAttrs(paint, box(t), t); if attrs: out.element('path', { d: ds.join(' '), 'fill-rule': 'nonzero', ...attrs })
   for dec in objArr(dtd,'decorations'):
      paints = as above for dec.styleID
@@ -1114,6 +1178,20 @@ sample's main page take that branch, all reported as `image-crop`), mask-run ter
 LUMINANCE colour space (§4.10), and the level-3/4 thresholds (§9.4), which are currently the
 plan's initial guesses.
 
+**Status (2026-09-18).** The first real oracle arrived: a Figma PNG export of frame
+`863:171055` "SCREEN-A" (1440×3026, an appointment form built almost entirely from component
+instances). Compared against it, the R1.5 renderer was wrong in every instance-heavy region —
+the same text on every card, hidden icons drawn, placeholder text visible, an icon in orange
+that Figma draws in #333333, a panel cut off at a third of its height. The causes are F17
+(corrected), F18, F19, F20 and F21 above, each measured file-wide before being fixed, and each
+now has golden tests against that frame (`R9` in `test/golden/render.test.ts`). Pixels differing
+from the export went from 0.97 % to 0.18 %, which is anti-aliasing. The export ships as
+`fixtures/sample/exports/863_171055.png`, so `npm run visual` now runs level 4 on one frame
+with a real Figma oracle (no SVG export, so level 3 and the ceiling still wait). Variable modes
+were checked and ruled out for this frame: all 170 variable-bound paints under it cache their
+default-mode value, though 6 929 nodes in the file do set `variableModeBySetMap`, so a frame
+that switches modes remains an open question for a fixture.
+
 ---
 
 ## 11. Definition of done
@@ -1307,6 +1385,21 @@ fixtures; check each file's licence before committing it.
     instance's, and the render comes out too large with the content in one corner.
 20. **Glyph blobs start with a close command** (F5): drop every command before the first
     moveto or the path is invalid and the rasterizer drops it without a word.
+21. **A record path segment is `overrideKey ?? guid`** (F17). Components created in the file
+    itself have no `overrideKey` on their children; look those records up by key alone and
+    every override of every native component vanishes, with nothing in the report to say so.
+22. **Hidden-by-property is invisible in the records** (F18). No `visible:false` record ever
+    mirrors a BOOLEAN=false assignment; evaluate `componentPropRefs` against the assignments or
+    every switched-off icon is drawn.
+23. **The cached paint beside a style reference lies** (F19). Resolve `styleIdFor*` to the
+    local style's paints on nodes, on records and on text-run entries; keep the cache only for
+    remote styles and the detached sentinel.
+24. **Measure inside instances on the effective node** (F20). Bounds, mask regions and clips
+    computed on the raw symbol tree are the symbol's size; memoise per instance scope, and drop
+    geometry a resizing record did not re-derive.
+25. **`truncationStartIndex` counts glyphs, and glyph `styleID` is a decoy** (F21). Cut the
+    glyph array at that index (the ellipsis is the glyph before it), and take the run style
+    from `characterStyleIDs[firstCharacter]`.
 
 ---
 
@@ -1315,10 +1408,12 @@ fixtures; check each file's licence before committing it.
 `node-type:<TYPE>` · `paint:<TYPE>` · `effect:<TYPE>` · `blend:<MODE>` · `mask:<TYPE>` ·
 `image-mode:<MODE>` · `image-missing` · `image-format:<mime>` · `image-crop` ·
 `image-rotation` · `image-filters` · `gradient-singular` · `emoji` · `glyph-rotation` ·
-`text-without-outlines` · `text-stroke` · `text-decoration` · `stroke-dashed` · `stroke-align:<ALIGN>` ·
+`text-without-outlines` · `text-property-without-outlines` · `text-stroke` · `text-decoration` ·
+`text-truncation` · `stroke-dashed` · `stroke-align:<ALIGN>` ·
 `stroke-without-geometry` · `vector-without-geometry` · `geometry:corrupt` ·
 `geometry:synthesised` · `mask-hidden` · `oversize` · `svg-rejected` ·
-`instance-unresolved` · `instance-recursive` · `node-failed` · `stroke-align:<ALIGN>`.
+`instance-unresolved` · `instance-recursive` · `instance-property` · `instance-swap` ·
+`node-failed`.
 
 The list is frozen in `src/render/report.ts` (`FEATURES` plus `FEATURE_PREFIXES`), and
 `isKnownFeature()` guards it: a golden test renders six subtrees and fails if any reported key

@@ -240,6 +240,8 @@ most-used first, so the load-bearing parts of the design system come back first.
 
 An instance that sets component properties reports them with the names resolved, e.g.
 `propAssignments: [ { "defID": "108:1543", "name": "text", "type": "TEXT", "value": "Back" } ]`.
+A path segment is the target's `overrideKey` when it has one and its guid otherwise, and a
+nested path is walked through swapped instances exactly as the renderer expands them.
 
 ### 9. `fig_variables` — design tokens
 
@@ -306,7 +308,9 @@ uninstalled, everything still works and `fig_render` returns SVG instead of PNG.
 
 **Exact**: solid fills, linear and radial gradients, image fills in all four scale modes,
 strokes including inside/outside alignment, boolean operations, text (glyph outlines, per-run
-colours, underline and strikethrough), component instances with their overrides, frame
+colours, underline and strikethrough, truncation with an ellipsis), component instances with
+their overrides, their component properties (text, visibility, instance swap) and the sizes the
+enclosing instance gives them, colour and effect styles resolved to their live definition, frame
 clipping, layer opacity, the fifteen shared blend modes, drop and inner shadows, layer blur,
 and all three mask types.
 
@@ -316,7 +320,12 @@ see behind an isolated subtree), `LINEAR_DODGE` and `LINEAR_BURN` (drawn as `scr
 image rotation.
 
 **Skipped, and always reported**: emoji glyphs, FigJam-style nodes (`WIDGET`, `CONNECTOR`,
-`SHAPE_WITH_TEXT`), text without stored outlines, and strokes on text.
+`SHAPE_WITH_TEXT`), text without stored outlines (including a text property whose words have
+no outlines in the file), and strokes on text.
+
+Fidelity was measured against a Figma export of a 1440×3026 form built from component
+instances (`fixtures/sample/exports/863_171055.png`): 0.18 % of pixels differ, all
+anti-aliasing. That comparison is what `npm run visual` reruns.
 
 Every response carries `unsupported` and `approximated` lists naming the feature and up to five
 example guids. An empty pair means the renderer believes it drew the node exactly. Exact values
@@ -373,8 +382,12 @@ src/
     access.ts       typed accessors over open records + presentation helpers
     summarize.ts    node summary / full detail / style block builders
     text.ts         characters + styled-run resolution
-    components.ts   symbols, instances, override path resolution
+    instance.ts     what an instance looks like: identity paths, records, property assignments
+    components.ts   symbols, instances, the fig_instance view
     variables.ts    collections, modes, alias chains
+  render/         LAYER 2½ — fig_render: node subtree → SVG → (optional) PNG
+    export.ts       the traversal; instance.ts / style.ts / bounds.ts / text.ts / paint.ts /
+                    effects.ts each own one concern; report.ts the frozen feature vocabulary
   mcp/            LAYER 3 — protocol
     create.ts       server factory (used by the entry point and by tests)
     server.ts       stdio entry point
