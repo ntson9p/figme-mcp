@@ -14,6 +14,14 @@
  * 18-pixel-tall box. Getting the sign wrong mirrors every glyph below its baseline.
  *
  * Do NOT use `advance` to place glyphs — `position` already includes kerning (Pitfall 12).
+ *
+ * Two more things the derived data encodes (F21):
+ *   - Truncation. `truncationStartIndex` indexes the GLYPH array, not the characters: the glyphs
+ *     from that index on are the cut-off tail, and the one just before it is the ellipsis Figma
+ *     inserted (which has no `firstCharacter`). All 920 truncated texts in the sample agree.
+ *   - Run styles. A glyph's `styleID` is never set for a styled run (12 576 of 12 576 in the
+ *     sample); the run is `textData.characterStyleIDs[firstCharacter]`, one entry per character
+ *     with an implicit 0 past the end of the array.
  */
 import type { NodeChange } from '../fig/parse.js';
 import type { KiwiObject } from '../fig/kiwi.js';
@@ -54,10 +62,16 @@ export function buildText(
   const glyphs = objArr(derived, 'glyphs');
   if (!derived || glyphs.length === 0) return undefined;
 
+  const cut = num(derived, 'truncationStartIndex');
+  const truncated = cut !== undefined && cut >= 0;
+  if (truncated) report.seen('text-truncation');
+  const runStyles = arr(obj(node, 'textData'), 'characterStyleIDs') ?? [];
+
   const byStyle = new Map<number, string[]>();
   let rotationReported = false;
 
-  for (const glyph of glyphs) {
+  for (const [i, glyph] of glyphs.entries()) {
+    if (truncated && i >= cut) break;
     if ((arr(glyph, 'emojiCodePoints') ?? []).length > 0) {
       // The outline blob of an emoji is empty; the artwork is a bitmap set we do not decode.
       report.approximated('emoji', guid);
@@ -92,7 +106,9 @@ export function buildText(
       f: num(position, 'y') ?? 0,
     });
 
-    const styleID = num(glyph, 'styleID') ?? 0;
+    const first = num(glyph, 'firstCharacter');
+    const runStyle = first === undefined ? undefined : runStyles[first];
+    const styleID = (typeof runStyle === 'number' ? runStyle : undefined) ?? num(glyph, 'styleID') ?? 0;
     const bucket = byStyle.get(styleID);
     if (bucket) bucket.push(d);
     else byStyle.set(styleID, [d]);

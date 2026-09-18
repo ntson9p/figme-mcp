@@ -878,3 +878,39 @@ describe('R9 — nested instances rasterized (F20)', { skip: skipRaster }, () =>
     assert.ok(countPixels(pixels, isWhite, { x: 0, y: 0, w: 229, h: 280 }) > 60_000);
   });
 });
+
+describe('R9 — text truncation and run styles (F21)', { skip }, () => {
+  it('the "※" run takes its colour from the style its table entry names', async () => {
+    // "Label※": characterStyleIDs [0,0,0,17]; entry 17 carries styleIdForFill → "Red" and no
+    // paints of its own, and none of the glyphs carries a styleID.
+    const { svg, report } = await renderNode(entry, '863:171323', { format: 'svg' });
+    assert.equal(svg.match(/<path /g)?.length, 2, 'one path per run');
+    assert.ok(svg.includes('fill="#d11d29"'), 'the "Red" style');
+    assert.deepEqual(report.unsupported, []);
+  });
+
+  it('a truncated card reports text-truncation and its whole neighbour does not', async () => {
+    const cut = await renderNode(entry, '863:171092', { format: 'svg' });
+    const whole = await renderNode(entry, '863:171091', { format: 'svg' });
+    assert.ok(cut.report.featuresPresent.includes('text-truncation'));
+    assert.ok(!whole.report.featuresPresent.includes('text-truncation'));
+  });
+});
+
+describe('R9 — text truncation and run styles rasterized (F21)', { skip: skipRaster }, () => {
+  it('the fourth card stops after two lines and ends in an ellipsis', async () => {
+    const { pixels } = await png('863:171092', { scale: 1 });
+    assert.deepEqual(darkBands(pixels, 20, 228, 70, 150), [[82, 97], [111, 126]], 'no third line');
+    // Where the twelfth character of line two used to be drawn there are now only the dots.
+    const tail = countPixels(pixels, isDark, { x: 212, y: 111, w: 20, h: 16 });
+    assert.ok(tail > 0 && tail < 30, `an ellipsis, not a glyph: ${tail} dark pixels`);
+  });
+
+  it('the required-field mark is red and the label beside it is not', async () => {
+    const { pixels } = await png('863:171323', { scale: 1 });
+    const isRed: Predicate = (r, g, b) => r > 160 && g < 80 && b < 80;
+    assert.ok(countPixels(pixels, isRed, { x: 48, y: 0, w: 16, h: 24 }) > 20);
+    assert.equal(countPixels(pixels, isRed, { x: 0, y: 0, w: 48, h: 24 }), 0);
+    assert.ok(countPixels(pixels, isDark, { x: 0, y: 0, w: 48, h: 24 }) > 100);
+  });
+});

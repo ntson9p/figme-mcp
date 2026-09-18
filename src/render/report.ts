@@ -49,6 +49,7 @@ export const FEATURES = [
   'text-property-without-outlines',
   'text-stroke',
   'text-decoration',
+  'text-truncation',
   'stroke-dashed',
   'stroke-without-geometry',
   'vector-without-geometry',
