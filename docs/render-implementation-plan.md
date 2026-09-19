@@ -1179,15 +1179,15 @@ LUMINANCE colour space (§4.10), and the level-3/4 thresholds (§9.4), which are
 plan's initial guesses.
 
 **Status (2026-09-18).** The first real oracle arrived: a Figma PNG export of frame
-`863:171055` "SCREEN-A" (1440×3026, an appointment form built almost entirely from component
+`863:171055` "SCREEN-A" (1440×3026, a form built almost entirely from component
 instances). Compared against it, the R1.5 renderer was wrong in every instance-heavy region —
 the same text on every card, hidden icons drawn, placeholder text visible, an icon in orange
 that Figma draws in #333333, a panel cut off at a third of its height. The causes are F17
 (corrected), F18, F19, F20 and F21 above, each measured file-wide before being fixed, and each
 now has golden tests against that frame (`R9` in `test/golden/render.test.ts`). Pixels differing
-from the export went from 0.97 % to 0.18 %, which is anti-aliasing. The export ships as
-`fixtures/sample/exports/863_171055.png`, so `npm run visual` now runs level 4 on one frame
-with a real Figma oracle (no SVG export, so level 3 and the ceiling still wait). Variable modes
+from the export went from 0.97 % to 0.18 %, which is anti-aliasing. That export is not
+distributed with this repository, so `npm run visual` runs level 4 only once you supply
+your own export (no SVG export either, so level 3 and the ceiling still wait). Variable modes
 were checked and ruled out for this frame: all 170 variable-bound paints under it cache their
 default-mode value, though 6 929 nodes in the file do set `variableModeBySetMap`, so a frame
 that switches modes remains an open question for a fixture.

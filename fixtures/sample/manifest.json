@@ -1,5 +1,5 @@
 {
-  "note": "Hand-picked frames from the development asset. Only 863:171055 ships a Figma export (a 1x PNG, no SVG), so level 4 runs for that frame alone; the others get levels 1-2 and the coverage scan. Recreate design.fig with: cp figma-input/sample.fig fixtures/sample/design.fig",
+  "note": "Hand-picked frames from the development asset. Guids and names here are neutral placeholders; the design they came from is not public. No Figma export ships with this repo, so level 4 has no oracle and frames get levels 1-2 plus the coverage scan. Recreate design.fig with: cp figma-input/sample.fig fixtures/sample/design.fig, and drop your own exports into exports/ to enable levels 3-4.",
   "exportedAt": "2026-09-18T00:00:00Z",
   "frames": [
     { "guid": "2:1558", "name": "rounded rectangle — path decoding" },

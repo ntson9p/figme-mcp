@@ -20,7 +20,7 @@ function node(
 }
 
 test('guidKey renders "sessionID:localID" and rejects incomplete guids', () => {
-  assert.equal(guidKey({ sessionID: 2, localID: 39 }), '2:1339');
+  assert.equal(guidKey({ sessionID: 2, localID: 1339 }), '2:1339');
   assert.equal(guidKey({ sessionID: 0, localID: 0 }), '0:0');
   assert.equal(guidKey({ sessionID: 2 }), undefined);
   assert.equal(guidKey(undefined), undefined);

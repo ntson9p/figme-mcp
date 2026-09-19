@@ -324,8 +324,9 @@ image rotation.
 no outlines in the file), and strokes on text.
 
 Fidelity was measured against a Figma export of a 1440×3026 form built from component
-instances (`fixtures/sample/exports/863_171055.png`): 0.18 % of pixels differ, all
-anti-aliasing. That comparison is what `npm run visual` reruns.
+instances: 0.18 % of pixels differ, all anti-aliasing. That export came from a design that
+is not public, so it is not distributed here — `npm run visual` runs levels 1-2 until you
+supply your own export.
 
 Every response carries `unsupported` and `approximated` lists naming the feature and up to five
 example guids. An empty pair means the renderer believes it drew the node exactly. Exact values
@@ -413,6 +414,11 @@ npm run crosscheck    # deep-compares our decode against the official kiwi-schem
 - **Golden tests** run against `figma-input/sample.fig` and assert measured values (116,142
   nodes, 638 schema definitions, 10 pages, specific node geometry, …). They **skip with a clear
   message** if the asset is absent.
+- **Fixture identifiers are placeholders.** The design this was developed against is not
+  public. Page, component, variable and layer names in this README, in `docs/` and in the
+  golden tests were replaced with neutral stand-ins, and node guids were renumbered. The
+  structure and the measured numbers are real; the names are not, so the string assertions
+  will not match your own `.fig` until you update them.
 - **Cross-check** decodes the same buffers with Evan Wallace's official `kiwi-schema` package and
   deep-compares every field: currently **0 differences across 17,353,242 compared values**. It
   skips cleanly if `kiwi-schema` is not installed.

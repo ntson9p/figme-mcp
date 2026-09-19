@@ -223,11 +223,12 @@ Open `reports/visual/index.html`. Each frame shows Figma's export, our render an
 by side, with the levels it passed, the features it exercises, and — when it differs — the
 layers the difference was attributed to.
 
-The sample fixture ships one real export, `fixtures/sample/exports/863_171055.png`: a 1× PNG of
-frame "SCREEN-A", a 1440×3026 appointment form built almost entirely from component instances.
-It is the export that exposed the instance defects fixed in September 2026 (plan facts
-F17–F21), and it is the only frame on which level 4 currently runs. It has no SVG export, so
-level 3 and the ceiling are still waiting for the first fixture made with the plugin above.
+The sample fixture was developed against one real export: a 1× PNG of frame "SCREEN-A", a
+1440×3026 form built almost entirely from component instances. It is the export that
+exposed the instance defects fixed in September 2026 (plan facts F17–F21). It came from a
+design that is not public, so the PNG is not distributed here: level 4 has no oracle until
+you add your own export to `fixtures/sample/exports/`, and level 3 and the ceiling still
+wait for an SVG export.
 
 ### The ceiling
 
