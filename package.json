@@ -1,8 +1,26 @@
 {
   "name": "figme-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": false,
   "description": "MCP server that reads local Figma .fig files, fully offline",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "figma",
+    "fig",
+    "design",
+    "ai-agent",
+    "offline"
+  ],
+  "homepage": "https://github.com/ntson9p/figme-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/ntson9p/figme-mcp/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ntson9p/figme-mcp.git"
+  },
+  "author": "ntson9p",
   "type": "module",
   "license": "MIT",
   "engines": {
