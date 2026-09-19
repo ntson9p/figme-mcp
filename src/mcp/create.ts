@@ -2,6 +2,7 @@
  * Server factory, kept separate from the stdio entry point so tests (and any other transport)
  * can build a fully-registered server without connecting to a process's stdin/stdout.
  */
+import * as fs from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { FileCache } from '../cache.js';
 import type { ToolContext } from './tools/context.js';
@@ -20,7 +21,18 @@ import * as blob from './tools/blob.js';
 import * as render from './tools/render.js';
 
 export const SERVER_NAME = 'figme';
-export const SERVER_VERSION = '1.0.0';
+/** Read from package.json so the reported version can never drift from the published one. */
+function packageVersion(): string {
+  try {
+    const raw = fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8');
+    const v: unknown = (JSON.parse(raw) as { version?: unknown }).version;
+    return typeof v === 'string' ? v : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+export const SERVER_VERSION = packageVersion();
 
 export const INSTRUCTIONS = [
   'Read-only access to local Figma .fig / .figma files. No Figma account, API or network is',
@@ -34,8 +46,21 @@ export const INSTRUCTIONS = [
   'fig_render returns a picture of any node - the fastest way to understand a frame. Always',
   'check its approximated/unsupported lists before trusting fine visual detail.',
   '',
-  'Node guids are "sessionID:localID" strings such as "2:1339". Responses are budgeted: when one',
-  'is cut you get truncated:true plus an opaque nextCursor to pass back.',
+  'Node guids are "sessionID:localID" strings such as "2:1339". A Figma link spells the same',
+  'id with a dash - node-id=3017-121 is guid "3017:121" - and every guid argument also accepts',
+  'that form, the percent-encoded form, or the whole link, so pass along whatever the user had.',
+  '',
+  'These tools read a .fig saved on disk and cannot open a figma.com URL. Given a link but no',
+  'file path, ask the user for the path. Never fetch the link, and never infer the design from',
+  'the words in it - the slug is a file name, not a specification.',
+  '',
+  'To implement a component: fig_render it first to see it, then fig_node for layout and size,',
+  'fig_style for resolved fills, strokes and type, fig_text for the exact copy, fig_instance if',
+  'it is an INSTANCE (it tells you whether to build something reusable), and fig_variables so',
+  'the code uses token names instead of literal values. Render again at the end and compare.',
+  '',
+  'Responses are budgeted: when one is cut you get truncated:true plus an opaque nextCursor to',
+  'pass back.',
 ].join('\n');
 
 export function createServer(ctx: ToolContext): McpServer {

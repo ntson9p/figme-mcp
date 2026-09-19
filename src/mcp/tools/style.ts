@@ -25,7 +25,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       description: DESCRIPTION,
       inputSchema: {
         file: fileArg,
-        guid: z.string().describe('Node guid, e.g. "2:1339".'),
+        guid: z.string().describe('Node guid, e.g. "2:1339". A Figma node-id or link works too.'),
         includeRuns: z
           .boolean()
           .optional()

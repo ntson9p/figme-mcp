@@ -25,7 +25,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       description: DESCRIPTION,
       inputSchema: {
         file: fileArg,
-        guid: z.string().describe('Guid of an INSTANCE node, e.g. "2:1329".'),
+        guid: z.string().describe('Guid of an INSTANCE node, e.g. "2:1329". A Figma node-id or link works too.'),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },

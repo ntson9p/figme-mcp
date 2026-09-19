@@ -71,7 +71,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
         file: fileArg,
         guid: z
           .string()
-          .describe('Node to render, e.g. "2:1339". A page guid renders the whole page, downscaled to fit maxSize.'),
+          .describe('Node to render, e.g. "2:1339"; a Figma node-id or link works too. A page guid renders the whole page, downscaled to fit maxSize.'),
         format: z
           .enum(['png', 'svg'])
           .optional()

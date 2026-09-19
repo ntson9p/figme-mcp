@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import type { FileCache, CacheEntry } from '../../cache.js';
 import type { FileIndex } from '../../model/index.js';
-import type { TreeNode } from '../../model/tree.js';
+import { canonicalGuid, guidNotFound, type TreeNode } from '../../model/tree.js';
 import { errorResult, type CallToolResult } from '../respond.js';
 
 export interface ToolContext {
@@ -26,13 +26,9 @@ export function load(ctx: ToolContext, file: string): CacheEntry {
 }
 
 export function requireNode(index: FileIndex, guid: string): TreeNode {
-  const t = index.node(guid);
-  if (!t) {
-    throw new Error(
-      `no node with guid ${JSON.stringify(guid)} in this file ` +
-        '(guids look like "2:1339"; use fig_find or fig_tree to discover them)',
-    );
-  }
+  const key = canonicalGuid(guid);
+  const t = index.node(key);
+  if (!t) throw new Error(guidNotFound(guid, key));
   return t;
 }
 

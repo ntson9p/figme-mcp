@@ -32,7 +32,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
           .optional()
           .describe('Case-insensitive substring matched against layer names AND text content.'),
         types: z.array(z.string()).optional().describe('Restrict to node types, e.g. ["TEXT"].'),
-        scope: z.string().optional().describe('Only search inside this guid subtree.'),
+        scope: z.string().optional().describe('Only search inside this guid subtree. A Figma node-id or link works too.'),
         limit: z.number().int().min(1).max(300).optional().describe(`Default ${DEFAULT_LIMIT}.`),
         cursor: cursorArg,
       },

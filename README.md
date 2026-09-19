@@ -180,6 +180,78 @@ only with memory to spare:
 { "command": "npx", "args": ["-y", "figme-mcp", "--max-files", "1"] }
 ```
 
+## From a Figma link
+
+The usual job: *implement this component from our design*, starting from a link someone pasted
+into a ticket.
+
+### 1. Save the file locally
+
+This server reads a `.fig` on your disk and never contacts figma.com, so a link by itself is not
+enough. Open it in Figma and use `File -> Save local copy...`. For a Community file, click
+**Open in Figma** first — that duplicates it into your drafts, which is what makes the copy
+possible.
+
+### 2. Take the node id from the link
+
+```
+https://www.figma.com/design/<file key>/<slug>?node-id=3017-121&t=<share token>
+                             ~~~~~~~~~~                ~~~~~~~~
+                             which file                which node
+```
+
+Figma writes node ids with a **dash** in links; the `.fig` format uses a **colon**, so
+`node-id=3017-121` is guid `3017:121`. You do not have to convert it yourself — every guid
+argument accepts all of these:
+
+| You pass | Server reads |
+|---|---|
+| `3017:121` | `3017:121` |
+| `3017-121` | `3017:121` |
+| `3017%3A121` | `3017:121` |
+| `node-id=3017-121` | `3017:121` |
+| the whole `https://www.figma.com/design/...?node-id=3017-121` | `3017:121` |
+
+Anything else is passed through untouched, so a typo still fails loudly rather than being
+guessed at.
+
+The file key is a cloud identifier with no counterpart in the saved file, so nothing can work
+out which local `.fig` a link refers to. Always give the path yourself.
+
+### 3. Ask for the component
+
+> Using figme, read `/abs/path/UX Case Study Template.fig` and implement node `3017:121` as a
+> React component.
+
+A good agent then works roughly in this order:
+
+1. **`fig_render`** — see it. The fastest orientation there is; check the `approximated` and
+   `unsupported` lists before trusting fine detail.
+2. **`fig_node`** — size, corner radii, auto-layout, constraints, children.
+3. **`fig_style`** — resolved fills, strokes, effects and typography, already shaped for code.
+4. **`fig_text`** — the exact copy, including per-run styling.
+5. **`fig_instance`** — if the node is an INSTANCE, what it came from and what is overridden.
+   This is what decides *reusable component* against *one-off*.
+6. **`fig_variables`** — token names, so the code references your theme instead of raw hex.
+7. **`fig_render` again**, and compare it against a screenshot of what you built.
+
+That last step is why the renderer exists: you get a pixel oracle, not just a description.
+
+### If the guid does not resolve
+
+Node ids are intrinsic to the document, so the id in the link should be the id in the saved
+file. If it is reported missing anyway you are most likely in the wrong file — compare
+`fig_overview`'s document name with the link's slug — or find the layer by name with `fig_find`,
+or browse the page with `fig_tree`.
+
+### Do not let an agent fetch the link
+
+A Figma URL is auth-gated and rendered by JavaScript, so fetching it yields nothing useful.
+Worse, the slug reads like a description, which is enough for a model to invent a plausible
+component and present it with confidence. The server says as much to every agent at connect
+time; if yours reaches for the web regardless, tell it not to.
+
+
 ## From source
 
 For development, or to run a revision that is not published yet:

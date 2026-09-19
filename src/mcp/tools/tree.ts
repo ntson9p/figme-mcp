@@ -30,7 +30,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
         root: z
           .string()
           .optional()
-          .describe('Guid to start from, e.g. "2:1339". Defaults to the DOCUMENT node.'),
+          .describe('Guid to start from, e.g. "2:1339"; a Figma node-id or link works too. Defaults to the DOCUMENT node.'),
         depth: z
           .number()
           .int()

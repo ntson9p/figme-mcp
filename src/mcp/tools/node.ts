@@ -23,7 +23,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       description: DESCRIPTION,
       inputSchema: {
         file: fileArg,
-        guid: z.string().describe('Node guid, "sessionID:localID", e.g. "2:1339".'),
+        guid: z.string().describe('Node guid, "sessionID:localID", e.g. "2:1339". A Figma node-id or link works too.'),
         detail: z.enum(['summary', 'full', 'raw']).optional().describe('Default "full".'),
         includeChildren: z
           .boolean()

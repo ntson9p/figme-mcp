@@ -35,7 +35,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
           .string()
           .optional()
           .describe('40-hex image hash, or the literal "thumbnail" for thumbnail.png.'),
-        guid: z.string().optional().describe('Node guid; uses the image fills on that node.'),
+        guid: z.string().optional().describe('Node guid; uses the image fills on that node. A Figma node-id or link works too.'),
         savePath: z
           .string()
           .optional()

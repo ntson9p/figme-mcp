@@ -25,7 +25,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       description: DESCRIPTION,
       inputSchema: {
         file: fileArg,
-        scope: z.string().optional().describe('Only collect text inside this guid subtree.'),
+        scope: z.string().optional().describe('Only collect text inside this guid subtree. A Figma node-id or link works too.'),
         includeRuns: z
           .boolean()
           .optional()

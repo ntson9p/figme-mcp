@@ -6,7 +6,7 @@
  * nothing is ever written back into the .fig.
  */
 import type { CacheEntry } from '../cache.js';
-import type { TreeNode } from '../model/tree.js';
+import { canonicalGuid, guidNotFound, type TreeNode } from '../model/tree.js';
 import { str } from '../model/access.js';
 import { pageBackground } from './color.js';
 import {
@@ -50,13 +50,9 @@ export interface RenderResult {
 }
 
 function resolveRoot(entry: CacheEntry, guid: string): TreeNode {
-  const t = entry.index.node(guid);
-  if (!t) {
-    throw new Error(
-      `no node with guid ${JSON.stringify(guid)} in this file ` +
-        '(guids look like "2:1339"; use fig_find or fig_tree to discover them)',
-    );
-  }
+  const key = canonicalGuid(guid);
+  const t = entry.index.node(key);
+  if (!t) throw new Error(guidNotFound(guid, key));
   if (nodeType(t.node) === 'DOCUMENT') {
     throw new Error('cannot render the DOCUMENT node — render a page or a node inside one');
   }

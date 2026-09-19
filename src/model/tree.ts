@@ -19,6 +19,39 @@ export function guidKey(g: Guid | undefined): string | undefined {
   return `${g.sessionID}:${g.localID}`;
 }
 
+/**
+ * Canonical guid for a reference supplied by a user or an agent.
+ *
+ * Figma writes node ids with a dash in links (`node-id=3017-121`), older links percent-encode
+ * the colon, and people paste the whole link. A guid is always two integers, so `3017-121` can
+ * never be a valid one itself and rewriting it is unambiguous. Anything unrecognised is handed
+ * back untouched, so a genuine typo still fails loudly instead of being guessed at.
+ */
+export function canonicalGuid(input: string): string {
+  const raw = input.trim();
+  const inLink = /(?:^|[?&#])node-id=([^&#\s]+)/i.exec(raw);
+  const pair = /^(\d+)[:-](\d+)$/.exec(decode(inLink ? inLink[1]! : raw).trim());
+  return pair ? `${pair[1]}:${pair[2]}` : raw;
+}
+
+function decode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
+/** One wording for a missing guid, shared by the MCP tools and the renderer. */
+export function guidNotFound(input: string, key: string): string {
+  const read = key === input.trim() ? '' : ` (read as ${JSON.stringify(key)})`;
+  return (
+    `no node with guid ${JSON.stringify(input)}${read} in this file. ` +
+    'Guids look like "2:1339"; a Figma link spells the same id "node-id=3017-121", and ' +
+    'that form, or the whole link, is accepted. Use fig_find or fig_tree to find guids.'
+  );
+}
+
 export function readGuid(obj: KiwiObject | undefined, field: string): string | undefined {
   return guidKey(obj?.[field] as Guid | undefined);
 }
