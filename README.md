@@ -51,42 +51,149 @@ These are deliberate, permanent limits — not missing features:
 - Runtime dependencies: `@modelcontextprotocol/sdk` and `zod`. The parser itself uses only
   Node built-ins.
 
-## Install and build
+## Install
 
-```bash
-npm install
-npm run build      # tsc -> dist/
-npm test           # builds, then runs the full node:test suite
+`figme` is published on npm, so there is nothing to clone and nothing to build — your MCP
+client downloads it on first start with `npx`.
+
+You need two things:
+
+- **Node.js >= 22.15** (see Requirements above).
+- **A `.fig` file on disk.** This server reads a local file and never contacts figma.com, so
+  there is no account, token or sign-in — but there is also nothing to read until you save
+  one. In Figma: `File -> Save local copy...`.
+
+### The part every client shares
+
+Nearly every MCP client spawns a stdio server from the same two fields:
+
+```json
+{ "command": "npx", "args": ["-y", "figme-mcp"] }
 ```
 
-## Registering the server
+On **Windows**, some clients cannot resolve `npx` on their own. If the server fails to start,
+route it through `cmd`:
 
-**Claude Code (project scope)** — this repo already contains a `.mcp.json`:
+```json
+{ "command": "cmd", "args": ["/c", "npx", "-y", "figme-mcp"] }
+```
+
+### Claude Code
+
+```bash
+claude mcp add figme -- npx -y figme-mcp           # this project
+claude mcp add -s user figme -- npx -y figme-mcp   # every project
+```
+
+Or commit a `.mcp.json` at the repository root so collaborators get it too:
 
 ```json
 {
   "mcpServers": {
     "figme": {
-      "command": "node",
-      "args": ["dist/mcp/server.js"]
+      "command": "npx",
+      "args": ["-y", "figme-mcp"]
     }
   }
 }
 ```
 
-**Claude Code (CLI, user scope)** — use an absolute path so it works from any directory:
+The Claude Code **extensions for VS Code and JetBrains** run Claude Code underneath and share
+its configuration: register the server once with the command above and the extension sees it.
+They do not read the editor's own MCP settings.
 
-```bash
-claude mcp add figme -- node /abs/path/to/figme/dist/mcp/server.js
+### Cursor
+
+`~/.cursor/mcp.json` for every project, or `.cursor/mcp.json` for a single one:
+
+```json
+{
+  "mcpServers": {
+    "figme": {
+      "command": "npx",
+      "args": ["-y", "figme-mcp"]
+    }
+  }
+}
 ```
 
-**Any other MCP client** — spawn `node /abs/path/to/figme/dist/mcp/server.js` and talk stdio.
+### VS Code — GitHub Copilot agent mode
 
-Optional flag: `--max-files N` (default 4) caps how many parsed files stay cached. A 39 MB
-`.fig` decodes to roughly 900 MB of live objects, so raise it only with memory to spare.
+VS Code uses its own key, `servers` rather than `mcpServers`, in `.vscode/mcp.json`:
 
-Paths passed as the `file` argument may be absolute, or relative to the server's working
-directory.
+```json
+{
+  "servers": {
+    "figme": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "figme-mcp"]
+    }
+  }
+}
+```
+
+The same entry works in your user `settings.json` under `"mcp"`. From a terminal:
+
+```bash
+code --add-mcp '{"name":"figme","command":"npx","args":["-y","figme-mcp"]}'
+```
+
+Then pick **Agent** mode in the Chat view.
+
+### Windsurf
+
+`~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "figme": {
+      "command": "npx",
+      "args": ["-y", "figme-mcp"]
+    }
+  }
+}
+```
+
+### Anything else
+
+Spawn `npx -y figme-mcp` and talk MCP over stdio.
+
+> Client UIs and config paths move between releases. The `command` and `args` pair above is the
+> stable part; if a path here does not match what you see, check that client's own MCP
+> documentation.
+
+### Two things to know before the first call
+
+**Use absolute paths.** A `file` argument may be relative, but it resolves against the server's
+working directory — whichever directory your client happened to launch it from. An absolute
+path removes the guesswork:
+
+> Using figme, run `fig_overview` on /Users/me/Desktop/design.fig
+
+**Watch memory.** `--max-files N` (default 4) caps how many parsed files stay cached. A 39 MB
+`.fig` decodes to roughly 900 MB of live objects, so lower it on a small machine and raise it
+only with memory to spare:
+
+```json
+{ "command": "npx", "args": ["-y", "figme-mcp", "--max-files", "1"] }
+```
+
+## From source
+
+For development, or to run a revision that is not published yet:
+
+```bash
+git clone https://github.com/ntson9p/figme-mcp.git
+cd figme-mcp
+npm install
+npm run build      # tsc -> dist/
+npm test           # builds, then runs the full node:test suite
+```
+
+Register `node /abs/path/to/figme-mcp/dist/mcp/server.js` in place of `npx -y figme-mcp`. This
+repository ships a `.mcp.json` that already does so for Claude Code.
 
 ---
 
