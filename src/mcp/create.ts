@@ -19,7 +19,7 @@ import * as image from './tools/image.js';
 import * as blob from './tools/blob.js';
 import * as render from './tools/render.js';
 
-export const SERVER_NAME = 'figfile';
+export const SERVER_NAME = 'figme';
 export const SERVER_VERSION = '1.0.0';
 
 export const INSTRUCTIONS = [

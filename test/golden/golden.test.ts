@@ -574,7 +574,7 @@ describe('M5 — images and blobs', { skip }, () => {
   before(async () => {
     index = new FileIndex(fig);
     harness = await connect();
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'figfile-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'figme-test-'));
   });
   after(async () => {
     await harness?.close();
@@ -774,7 +774,7 @@ describe('M6 — response budgets and hardening', { skip }, () => {
   });
 
   it('a non-.fig file reports what bytes it saw', async () => {
-    const notFig = path.join(os.tmpdir(), `figfile-notfig-${process.pid}.fig`);
+    const notFig = path.join(os.tmpdir(), `figme-notfig-${process.pid}.fig`);
     fs.writeFileSync(notFig, Buffer.from('this is not a figma file at all'));
     try {
       const r = await harness.call('fig_overview', { file: notFig });

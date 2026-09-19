@@ -1,4 +1,4 @@
-# PLAN: `figfile` — an MCP server that lets AI agents read local `.fig` files
+# PLAN: `figme` — an MCP server that lets AI agents read local `.fig` files
 
 > **Audience**: the AI agent implementing this server. Execute milestones **in order** (M0→M6);
 > each has acceptance criteria — run them before moving on. The byte-level reading procedure is
@@ -172,7 +172,7 @@ correct length; oversized blob truncates with flag.
 Budget enforcement tests (craft a depth-6 tree call; assert truncation+cursor); corrupt-input
 tests (truncated file, bad magic, unknown codec → error messages contain hex context);
 `README.md`: what it is, non-goals, tool reference with examples, registration snippet for
-`.mcp.json` and `claude mcp add figfile -- node <abs>/dist/mcp/server.js`; keep
+`.mcp.json` and `claude mcp add figme -- node <abs>/dist/mcp/server.js`; keep
 `docs/*` links accurate. **Stretch (optional)**: vector-network blob decoding following
 fig2sketch's `vector_network.py`. **Accept**: full `node --test` suite green; manual smoke: from
 a Claude Code session with the server registered, run the demo script in §9.

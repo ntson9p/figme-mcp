@@ -1,5 +1,5 @@
 {
-  "name": "figfile-mcp",
+  "name": "figme-mcp",
   "version": "1.0.0",
   "private": false,
   "description": "MCP server that reads local Figma .fig files, fully offline",
@@ -9,7 +9,7 @@
     "node": ">=22.15"
   },
   "bin": {
-    "figfile-mcp": "dist/mcp/server.js"
+    "figme-mcp": "dist/mcp/server.js"
   },
   "files": [
     "dist",

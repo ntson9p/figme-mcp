@@ -128,9 +128,9 @@ export function renderGallery(input: GalleryInput): string {
   );
 
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>figfile render report</title>
+<html lang="en"><head><meta charset="utf-8"><title>figme render report</title>
 <style>${STYLE}</style></head><body>
-<h1>figfile — visual render report</h1>
+<h1>figme — visual render report</h1>
 <div class="sub">${esc(input.generatedAt)} · ${frames.length} frame(s) across ${input.runs.length} fixture(s)
  · L1 ${counts((f) => f.level1)} · L2 ${counts((f) => f.level2)} · L3 ${counts((f) => f.level3)} · L4 ${counts((f) => f.level4)}</div>
 

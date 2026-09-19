@@ -68,7 +68,7 @@ run it. Move everything it downloads into `fixtures/<design>/exports/`, and move
 `manifest.json` (the plugin's own manifest, not the fixture's)
 
 ```json
-{ "name": "figfile fixture exporter", "id": "figfile-fixture-exporter", "api": "1.0.0",
+{ "name": "figme fixture exporter", "id": "figme-fixture-exporter", "api": "1.0.0",
   "main": "code.js", "ui": "ui.html", "editorType": ["figma"] }
 ```
 

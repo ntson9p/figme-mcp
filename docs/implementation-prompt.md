@@ -1,4 +1,4 @@
-# Prompt: implement the `figfile` MCP server
+# Prompt: implement the `figme` MCP server
 
 Copy everything inside the fence into a brand-new AI agent session started in the repo root
 (`d:\code\figme`).
@@ -47,7 +47,7 @@ DEFINITION OF DONE (from the plan, section 10)
 - The server starts over stdio and answers the manual smoke script (plan section 9).
 - README.md documents purpose, explicit non-goals (no rendering/screenshots, no writing, no
   Figma API), every tool with an example, and registration via .mcp.json and
-  `claude mcp add figfile -- node <abs-path>/dist/mcp/server.js`.
+  `claude mcp add figme -- node <abs-path>/dist/mcp/server.js`.
 - tools/fig2json.mjs still runs: `node tools/fig2json.mjs figma-input/sample.fig <tmpdir>`.
 
 FINAL REPORT

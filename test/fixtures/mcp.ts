@@ -27,7 +27,7 @@ export async function connect(maxFiles = 4): Promise<Harness> {
   const ctx = createContext(maxFiles);
   const server = createServer(ctx);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: 'figfile-tests', version: '1.0.0' });
+  const client = new Client({ name: 'figme-tests', version: '1.0.0' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
   return {

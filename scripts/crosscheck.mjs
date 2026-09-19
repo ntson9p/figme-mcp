@@ -56,7 +56,7 @@ console.log(`kiwi-schema    : ${refSchema.definitions.length} definitions, ${ref
 // --- our decode --------------------------------------------------------------------------
 const ourSchema = ours.decodeBinarySchema(schemaBuf);
 const mine = ours.makeDecoder(ourSchema).decode('Message', dataBuf);
-console.log(`figfile parser : ${ourSchema.length} definitions, ${mine.nodeChanges?.length ?? 0} nodes`);
+console.log(`figme parser   : ${ourSchema.length} definitions, ${mine.nodeChanges?.length ?? 0} nodes`);
 
 // --- compare ------------------------------------------------------------------------------
 const diffs = [];

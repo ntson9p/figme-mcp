@@ -1,6 +1,6 @@
-# figfile — read local Figma `.fig` files from an AI agent
+# figme — read local Figma `.fig` files from an AI agent
 
-`figfile` is an [MCP](https://modelcontextprotocol.io) server that lets an AI agent read
+`figme` is an [MCP](https://modelcontextprotocol.io) server that lets an AI agent read
 **everything inside a local `.fig` / `.figma` file** — document structure, geometry, fills,
 strokes, effects, auto-layout, text (including mixed-format runs), components and instances,
 variables, prototype links and embedded bitmaps.
@@ -66,7 +66,7 @@ npm test           # builds, then runs the full node:test suite
 ```json
 {
   "mcpServers": {
-    "figfile": {
+    "figme": {
       "command": "node",
       "args": ["dist/mcp/server.js"]
     }
@@ -77,7 +77,7 @@ npm test           # builds, then runs the full node:test suite
 **Claude Code (CLI, user scope)** — use an absolute path so it works from any directory:
 
 ```bash
-claude mcp add figfile -- node /abs/path/to/figme/dist/mcp/server.js
+claude mcp add figme -- node /abs/path/to/figme/dist/mcp/server.js
 ```
 
 **Any other MCP client** — spawn `node /abs/path/to/figme/dist/mcp/server.js` and talk stdio.

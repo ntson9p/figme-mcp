@@ -29,7 +29,7 @@ const check = (label, ok, detail = '') => {
   if (!ok) failures++;
 };
 
-const client = new Client({ name: 'figfile-smoke', version: '1.0.0' });
+const client = new Client({ name: 'figme-smoke', version: '1.0.0' });
 const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER] });
 await client.connect(transport);
 

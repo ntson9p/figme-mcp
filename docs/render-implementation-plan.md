@@ -1268,7 +1268,7 @@ the UI offers one download per file and a "Download all" button. Move the files 
 
 `manifest.json`
 ```json
-{ "name": "figfile fixture exporter", "id": "figfile-fixture-exporter", "api": "1.0.0",
+{ "name": "figme fixture exporter", "id": "figme-fixture-exporter", "api": "1.0.0",
   "main": "code.js", "ui": "ui.html", "editorType": ["figma"] }
 ```
 

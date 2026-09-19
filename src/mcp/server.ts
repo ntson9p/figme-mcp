@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * figfile — an MCP server that reads local Figma `.fig` files, fully offline.
+ * figme — an MCP server that reads local Figma `.fig` files, fully offline.
  *
  * Transport: stdio. Nothing here touches the network, and nothing writes to a .fig file;
  * the only write path is `fig_image { savePath }`, which the caller asks for explicitly.
