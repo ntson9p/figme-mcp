@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { FileIndex } from '../../dist/model/index.js';
+import type { KiwiObject } from '../../dist/fig/kiwi.js';
 import { overrideIdentity, type TreeNode } from '../../dist/model/tree.js';
 import {
   applyProps,
@@ -17,7 +18,7 @@ const guid = (s: string) => {
   return { sessionID, localID };
 };
 
-function tree(key: string, node: Record<string, unknown>, children: TreeNode[] = []): TreeNode {
+function tree(key: string, node: KiwiObject, children: TreeNode[] = []): TreeNode {
   const t: TreeNode = { key, node, children, parent: undefined, order: 0, depth: 0, page: undefined };
   for (const c of children) c.parent = t;
   return t;
