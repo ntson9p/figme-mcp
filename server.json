@@ -1,0 +1,24 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ntson9p/figme-mcp",
+  "title": "Figme",
+  "description": "MCP server that reads local Figma .fig files, fully offline",
+  "version": "1.1.1",
+  "repository": {
+    "url": "https://github.com/ntson9p/figme-mcp",
+    "source": "github",
+    "id": "1376607310"
+  },
+  "websiteUrl": "https://github.com/ntson9p/figme-mcp#readme",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "figme-mcp",
+      "version": "1.1.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

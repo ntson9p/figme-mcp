@@ -1,6 +1,7 @@
 {
   "name": "figme-mcp",
-  "version": "1.1.0",
+  "version": "1.1.1",
+  "mcpName": "io.github.ntson9p/figme-mcp",
   "private": false,
   "description": "MCP server that reads local Figma .fig files, fully offline",
   "keywords": [
