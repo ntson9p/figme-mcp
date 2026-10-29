@@ -36,6 +36,23 @@ guessed at.
 The file key is a cloud identifier with no counterpart in the saved file, so nothing can work
 out which local `.fig` a link refers to. Always give the path yourself.
 
+### Layers inside component instances
+
+An instance stores none of its layers: they are its component's, changed by the instance's
+overrides and component-property values. figme shows them anyway, as Figma does, and gives each
+the id Figma itself uses — the instance's guid, then one `;`-separated segment per level of
+instance nesting:
+
+| Id | Names |
+|---|---|
+| `1319:26210` | a DatePicker instance (iOS 16 UI Kit) |
+| `I1319:26210;55:4649` | its month label, as that instance shows it |
+| `I1319:26210;55:2890;55:3914` | the "6" in a day-row instance nested inside it |
+
+`fig_tree` lists these ids, and every tool that takes a guid accepts them, also spelled the way
+a link writes them (`node-id=I1319-26210%3B55-4649`). They describe the layer as the instance
+shows it: overrides, property values and shared styles applied.
+
 ## Workflow
 
 The intended workflow: **`fig_overview` → `fig_tree` a page → `fig_node` / `fig_style` a guid**,
@@ -87,20 +104,26 @@ components / variables / images the file holds.
 
 ### 2. `fig_tree` — explore structure
 
-`root` (default DOCUMENT), `depth` (default 2, max 6), `types` filter, `format`, `cursor`.
-Returns a **flat list in document order**; each entry has `depth` (relative to the root) and
-`parent`, so the hierarchy is reconstructable, plus `children` (a count) so you can see where
-it is worth going deeper.
+`root` (default DOCUMENT), `depth` (default 2, max 6), `types` filter, `format`, `instances`,
+`cursor`. Returns a **flat list in document order**; each entry has `depth` (relative to the
+root) and `parent`, so the hierarchy is reconstructable, plus `children` (a count) so you can
+see where it is worth going deeper. A hidden layer — hidden directly or by a component property
+— is marked `hidden`.
+
+Component instances are walked into: their layers come back as the instance shows them, with
+the ids described under [Layers inside component instances](#layers-inside-component-instances).
+`instances: false` lists only the layers stored in the file.
 
 ```
-// → fig_tree { "file": "…", "root": "2:1339", "depth": 3, "format": "outline" }
-root 2:1339 "Frame 39" depth<=3
-[FRAME] 134x40 "Frame 39" (2:1339) x4
-  [INSTANCE] 16x16 "lv1/ic/setting" (2:1340)
-  [TEXT] 64x24 "text" (2:1341)
-  [INSTANCE] 6x6 "lv1/ic/arrow-down" (2:1342)
-  [FRAME] 28x24 "Frame 6" (2:1343) x1
-    [INSTANCE] 28x22 "lv2/notification" (2:1344)
+// → fig_tree { "file": "…/ios-16-ui-kit.fig", "root": "1319:26210", "depth": 2, "format": "outline" }
+root 1319:26210 "DatePicker" depth<=2
+[INSTANCE] 357x370 "DatePicker" (1319:26210) x8
+  [FRAME] 325x44 "Month Picker" (I1319:26210;55:4647) x2
+    [FRAME] 100.69x22 "Month + Year" (I1319:26210;55:4648) x2
+    [FRAME] 51x17.32 "Arrows" (I1319:26210;55:4651) x2
+  [INSTANCE] 325x18 "_DatePicker-dayRow" (I1319:26210;55:4468) x7
+    [TEXT] 32x18 "✏️ Day" (I1319:26210;55:4468;55:4105)
+    …
 ```
 
 `format: "outline"` is roughly 4× denser than JSON and is the best way to browse.
@@ -138,7 +161,9 @@ Likewise `counterSpacing`, the gap between wrapped lines, appears only on a layo
 ### 4. `fig_find` — search names and copy
 
 `query` (case-insensitive substring, matched against layer names **and** text content), plus
-optional `types`, `scope`, `limit`, `cursor`. Omit `query` to list all nodes of some types.
+optional `types`, `scope`, `limit`, `instances`, `cursor`. Omit `query` to list all nodes of
+some types. The search covers the layers stored in the file; `instances: true` also searches
+the layers component instances show, with their overrides — best combined with a `scope`.
 
 ```jsonc
 // → fig_find { "file": "…", "query": "sample", "types": ["TEXT"], "limit": 3 }
@@ -154,6 +179,12 @@ optional `types`, `scope`, `limit`, `cursor`. Omit `query` to list all nodes of 
 All text in the file or in one `scope`, in document order, with a compact style block.
 `includeRuns: true` adds the **styled runs** — the mixed-format spans Figma stores per UTF-16
 code unit — each showing only the fields it overrides.
+
+With a `scope`, the text that component instances show is included, as they show it — a
+DatePicker instance yields its 45 strings, not the 2 stored in its component's own frames. For
+the whole file the inventory lists the text layers stored in it (component definitions
+included) unless `instances: true` is passed. A text that is hidden, or sits inside a hidden
+layer, carries `hidden: true`.
 
 ```jsonc
 // → fig_text { "file": "…", "scope": "2:7098", "includeRuns": true }
@@ -227,6 +258,10 @@ An instance that sets component properties reports them with the names resolved,
 A path segment is the target's `overrideKey` when it has one and its guid otherwise, and a
 nested path is walked through swapped instances exactly as the renderer expands them.
 
+An instance nested in another one can be explained by its sublayer id, e.g.
+`I1340:17094;1147:11418`. Its own overrides are followed by the ones the enclosing instance
+applies inside it, re-addressed from the nested instance and marked `"inherited": true`.
+
 ### 9. `fig_variables` — design tokens
 
 Every collection with its modes, and every variable with a value per mode. Alias chains are
@@ -276,7 +311,8 @@ Vector geometry lives in a separate binary blob format. `fig_node` reports the b
 
 `guid` (any node, or a page), `format` (`png` | `svg`, default `png`), `scale` (default 2),
 `maxSize` (longest edge, default 1568), `background` (`transparent` | `page`), `savePath`,
-`maxNodes` (default 20000, counted in layers).
+`maxNodes` (default 20000, counted in layers). A layer inside an instance (a sublayer id such
+as `I1319:26210;55:2890`) is drawn as that instance shows it.
 
 ```jsonc
 // → fig_render { "file": "…", "guid": "2:1339" }

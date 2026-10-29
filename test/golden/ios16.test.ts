@@ -15,6 +15,7 @@ import { REPO_ROOT } from '../fixtures/asset.ts';
 import { parseFig } from '../../dist/fig/parse.js';
 import { FileIndex } from '../../dist/model/index.js';
 import { styleBlock } from '../../dist/model/summarize.js';
+import { resolveScene, sceneOf } from '../../dist/model/scene.js';
 import { textView } from '../../dist/model/text.js';
 import { connect, type Harness } from '../fixtures/mcp.ts';
 
@@ -152,5 +153,112 @@ describe('iOS 16 UI Kit — auto-layout spacing', { skip }, () => {
     const layout = (style.json['style'] as Record<string, any>)['layout'];
     assert.equal(layout.gap, undefined);
     assert.equal(layout.justifyContent, 'space-between');
+  });
+});
+
+describe('iOS 16 UI Kit — component instances are walked into (F17, F18)', { skip }, () => {
+  it('fig_text finds every string the DatePicker instance shows', async () => {
+    // Before, only the 2 text layers stored in the component's own frames came back.
+    const r = await harness.call('fig_text', { file, scope: '1319-26210' });
+    assert.equal(r.json['totalTextNodes'], 45);
+    const texts = r.json['texts'] as Record<string, any>[];
+    const days = Array.from({ length: 31 }, (_, i) => String(i + 1));
+    assert.deepEqual(
+      texts.filter((t) => !t['hidden']).map((t) => t['characters']),
+      ['June 2022', 'SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', ...days, 'Time', '9:41 AM'],
+    );
+    // June 2022 starts on a Wednesday: three blank cells before the 1st, one after the 31st.
+    assert.equal(texts.filter((t) => t['hidden']).length, 4);
+    const six = texts.find((t) => t['characters'] === '6')!;
+    assert.equal(six['guid'], 'I1319:26210;55:2890;55:3914');
+    assert.deepEqual(six['style'], { font: 'SF Pro Display Semibold', size: 20, lineHeight: '25px', color: '#FFFFFF' });
+  });
+
+  it('fig_tree lists the layers an instance shows, and instances:false only the stored ones', async () => {
+    const r = await harness.call('fig_tree', { file, root: '1319:26210', depth: 3, format: 'outline' });
+    assert.match(r.text, /\[INSTANCE\] 357x370 "DatePicker" \(1319:26210\) x8/);
+    assert.match(r.text, /\n {4}\[FRAME\] 40x40 "Digit" \(I1319:26210;55:2890;55:7351\) x1/);
+    assert.match(r.text, /\n {6}\[TEXT\] 40x25 "✏️ Date" \(I1319:26210;55:2889;55:2861\) hidden/);
+    const stored = await harness.call('fig_tree', { file, root: '1319:26210', depth: 3, instances: false });
+    assert.deepEqual((stored.json['nodes'] as { guid: string }[]).map((n) => n.guid), ['1319:26210']);
+  });
+
+  it('every layer an instance shows has an id that resolves back to that layer', () => {
+    let checked = 0;
+    const wrong: string[] = [];
+    for (const t of index.tree.ordered) {
+      if (t.node['type'] !== 'INSTANCE') continue;
+      const stack = [...sceneOf(index, t).children];
+      while (stack.length) {
+        const s = stack.pop()!;
+        checked++;
+        const back = resolveScene(index, s.key);
+        const same =
+          back !== undefined &&
+          back.source === s.source &&
+          back.node['visible'] === s.node['visible'] &&
+          JSON.stringify(back.node['textData']) === JSON.stringify(s.node['textData']);
+        if (!same) wrong.push(s.key);
+        stack.push(...s.children);
+      }
+    }
+    assert.ok(checked > 10_000, `${checked} layers checked`);
+    assert.deepEqual(wrong.slice(0, 5), []);
+  });
+
+  it('fig_node, fig_style and fig_render take a sublayer id, also as a link spells it', async () => {
+    const link = 'https://www.figma.com/design/k/n?node-id=I1319-26210%3B55-2890%3B55-7351';
+    const node = await harness.call('fig_node', { file, guid: link, includeChildren: false });
+    const n = node.json['node'] as Record<string, any>;
+    assert.equal(n['guid'], 'I1319:26210;55:2890;55:7351');
+    assert.equal(n['parent'], 'I1319:26210;55:2890');
+    assert.deepEqual(n['fills'], [{ type: 'SOLID', color: '#FF3B30' }]);
+    assert.equal(n['styles'].fill.name, 'Default/SystemRed/Light');
+    assert.deepEqual([n['geometry'].absoluteX, n['geometry'].absoluteY], [49, 437]);
+
+    const style = await harness.call('fig_style', { file, guid: 'I1319:26210;55:2890;55:3914' });
+    assert.equal((style.json['style'] as Record<string, any>)['typography'].color, '#FFFFFF');
+    assert.equal((style.json['text'] as Record<string, any>)['characters'], '6');
+
+    const render = await harness.call('fig_render', { file, guid: 'I1319:26210;55:2890', format: 'svg' });
+    assert.equal(render.isError, false, render.text.slice(0, 200));
+    assert.match(render.text, /^<svg [^>]*width="325" height="40"/);
+    assert.match(render.text, /fill="#ff3b30"/, 'the selected day is drawn in this row');
+  });
+
+  it('fig_instance explains a nested instance, with what the enclosing instance changes in it', async () => {
+    const r = await harness.call('fig_instance', { file, guid: 'I1340:17094;1147:11418' });
+    const instance = r.json['instance'] as Record<string, any>;
+    assert.equal(instance['guid'], 'I1340:17094;1147:11418');
+    assert.equal(instance['name'], '_TableView-cell (last)');
+    const inherited = (r.json['overrides'] as Record<string, any>[]).filter((o) => o['inherited']);
+    assert.equal(inherited.length, 4);
+    assert.ok(inherited.some((o) => o['fields'].text?.characters === 'Action'));
+  });
+
+  it('fig_find searches the layers instances show only when asked', async () => {
+    const stored = await harness.call('fig_find', { file, query: '9:41', scope: '1319:26210' });
+    assert.equal(stored.json['totalMatches'], 0);
+    const shown = await harness.call('fig_find', { file, query: '9:41', scope: '1319:26210', instances: true });
+    const hits = shown.json['results'] as Record<string, any>[];
+    assert.deepEqual(hits.map((h) => [h['guid'], h['matchedOn']]), [['I1319:26210;55:4825;839:10598', 'text']]);
+  });
+
+  it('a depth-6 walk through instances paginates to the end without repeating a layer', async () => {
+    const seen = new Set<string>();
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const r = await harness.call('fig_tree', { file, root: '1002:6666', depth: 6, cursor });
+      assert.ok(r.size < 20_000, `page ${pages} was ${r.size} chars`);
+      for (const n of r.json['nodes'] as { guid: string }[]) {
+        assert.equal(seen.has(n.guid), false, `${n.guid} was returned twice`);
+        seen.add(n.guid);
+      }
+      cursor = r.json['nextCursor'] as string | undefined;
+      pages++;
+    } while (cursor && pages < 100);
+    assert.equal(cursor, undefined, 'the walk finishes');
+    assert.ok(seen.size > 1_000);
   });
 });

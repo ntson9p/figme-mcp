@@ -1,7 +1,7 @@
 /** `fig_style` — the resolved, code-generation-oriented style of one node. */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { fileArg, handler, load, requireNode, type ToolContext } from './context.js';
+import { fileArg, handler, load, requireScene, type ToolContext } from './context.js';
 import { jsonResult } from '../respond.js';
 import { styleBlock } from '../../model/summarize.js';
 import { textView } from '../../model/text.js';
@@ -15,7 +15,8 @@ export const DESCRIPTION = [
   '(display, direction, gap, padding, justifyContent, alignItems, sizing) plus how the node',
   'behaves inside its parent layout (flexGrow, alignSelf, margin).',
   'Shared styles and variable bindings are named whenever they resolve inside this file, and a',
-  'value that comes from a shared style is that style\'s live value.',
+  'value that comes from a shared style is that style\'s live value. A layer inside a component',
+  'instance (an id like "I2:1329;0:2528" from fig_tree) is styled as that instance shows it.',
 ].join(' ');
 
 export function register(server: McpServer, ctx: ToolContext): void {
@@ -36,7 +37,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
     handler((args: { file: string; guid: string; includeRuns?: boolean }) => {
       const { index } = load(ctx, args.file);
-      const t = requireNode(index, args.guid);
+      const t = requireScene(index, args.guid);
       const style = styleBlock(index, t);
       const text =
         str(t.node, 'type') === 'TEXT' ? textView(index, t, args.includeRuns === true) : undefined;

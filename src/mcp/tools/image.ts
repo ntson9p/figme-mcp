@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { fileArg, handler, load, requireNode, type ToolContext } from './context.js';
+import { fileArg, handler, load, requireScene, type ToolContext } from './context.js';
 import { jsonResult, type CallToolResult } from '../respond.js';
 import { sniffImage } from '../../fig/imagemeta.js';
 import { nodeImageHashes } from '../../model/index.js';
@@ -53,7 +53,8 @@ export function register(server: McpServer, ctx: ToolContext): void {
 
       let hash = args.hash;
       if (!hash && args.guid) {
-        const t = requireNode(index, args.guid);
+        // A layer inside an instance carries the image paints its overrides gave it.
+        const t = requireScene(index, args.guid);
         const hashes = nodeImageHashes(t.node);
         if (hashes.length === 0) {
           throw new Error(

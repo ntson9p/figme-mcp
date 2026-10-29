@@ -1,14 +1,15 @@
 /** `fig_node` — inspect exactly one node at a chosen detail level. */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { fileArg, handler, load, requireNode, type ToolContext } from './context.js';
+import { fileArg, handler, load, requireScene, type ToolContext } from './context.js';
 import { jsonResult } from '../respond.js';
 import { nodeDetail, nodeRaw, summarize } from '../../model/summarize.js';
 
 export const NAME = 'fig_node';
 
 export const DESCRIPTION = [
-  'Inspect one node by guid (e.g. "2:1339").',
+  'Inspect one node by guid (e.g. "2:1339"), or a layer inside a component instance by the id',
+  'fig_tree lists for it (e.g. "I2:1329;0:2528").',
   'detail:"full" (default) gives geometry, fills/strokes/effects as hex colours, corner radii,',
   'auto-layout, text basics, component and variable links, plus child summaries.',
   'detail:"raw" returns the decoded Figma record verbatim — the escape hatch for fields this',
@@ -40,7 +41,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
         includeChildren?: boolean;
       }) => {
         const { index } = load(ctx, args.file);
-        const t = requireNode(index, args.guid);
+        const t = requireScene(index, args.guid);
         const detail = args.detail ?? 'full';
         const includeChildren = args.includeChildren !== false;
 
@@ -53,7 +54,10 @@ export function register(server: McpServer, ctx: ToolContext): void {
             detail,
             node: nodeRaw(t),
             children: includeChildren ? t.children.map((c) => summarize(c)) : undefined,
-            note: 'raw = the decoded NodeChange as stored in the file; bytes are hex, int64 are strings',
+            note: t.virtual
+              ? `raw = the record of component layer ${t.source.key} as this instance shows it, ` +
+                'with the override records and property values merged in; bytes are hex, int64 are strings'
+              : 'raw = the decoded NodeChange as stored in the file; bytes are hex, int64 are strings',
           });
         }
         return jsonResult({

@@ -1,9 +1,20 @@
 /** `fig_tree` — shallow-by-default structural exploration of a subtree. */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { cursorArg, fileArg, handler, load, resolveRoot, type ToolContext } from './context.js';
+import {
+  cursorArg,
+  fileArg,
+  handler,
+  instancesArg,
+  load,
+  resolveRoot,
+  resolveSceneRoot,
+  type ToolContext,
+} from './context.js';
 import { Packer, decodeCursor, encodeCursor, jsonResult, measure, textResult } from '../respond.js';
 import { outlineLine, summarize } from '../../model/summarize.js';
+import { canonicalGuid, type TreeNode } from '../../model/tree.js';
+import { isSublayerId } from '../../model/scene.js';
 import { str } from '../../model/access.js';
 
 export const NAME = 'fig_tree';
@@ -12,9 +23,11 @@ export const DESCRIPTION = [
   'List the layers under a node, breadth-limited by depth (default 2, max 6).',
   'Returns a FLAT list in document order; each entry carries `depth` (relative to the requested',
   'root) and `parent`, so the hierarchy is reconstructable, and `children` (count) so you can',
-  'see where to deepen. format:"outline" returns indented text lines instead of JSON and is',
-  'roughly 4x denser for browsing. Large subtrees are truncated with truncated:true and a',
-  'nextCursor you can pass back to continue.',
+  'see where to deepen. Component instances are walked into, so the layers an instance shows',
+  'come back with their overrides applied and ids like "I2:1329;0:2528", which every tool',
+  'accepts; hidden layers are flagged. format:"outline" returns indented text lines instead of',
+  'JSON and is roughly 4x denser for browsing. Large subtrees are truncated with truncated:true',
+  'and a nextCursor you can pass back to continue.',
 ].join(' ');
 
 const MAX_DEPTH = 6;
@@ -43,6 +56,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
           .optional()
           .describe('Only include these node types, e.g. ["FRAME","TEXT"]. Depth still applies.'),
         format: z.enum(['json', 'outline']).optional().describe('Default "json".'),
+        instances: instancesArg('Default true; false lists only the layers stored in the file.'),
         cursor: cursorArg,
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -54,25 +68,37 @@ export function register(server: McpServer, ctx: ToolContext): void {
         depth?: number;
         types?: string[];
         format?: 'json' | 'outline';
+        instances?: boolean;
         cursor?: string;
       }) => {
         const { index } = load(ctx, args.file);
-        const rootNode = resolveRoot(index, args.root);
+        const expand = args.instances !== false;
+        // Without expansion a stored root is walked exactly as stored; a layer inside an
+        // instance can only be reached through the scene, nested instances left closed.
+        const rootNode: TreeNode =
+          expand || (args.root !== undefined && isSublayerId(canonicalGuid(args.root)))
+            ? resolveSceneRoot(index, args.root)
+            : resolveRoot(index, args.root);
+        const childrenOf = (t: TreeNode): readonly TreeNode[] =>
+          !expand && str(t.node, 'type') === 'INSTANCE' ? [] : t.children;
         const depth = args.depth ?? 2;
         const format = args.format ?? 'json';
         const typeFilter = args.types?.length ? new Set(args.types) : undefined;
         const { after } = decodeCursor(args.cursor);
-        const { start, end } = index.subtreeRange(rootNode);
 
         const packer = new Packer<unknown>();
         let skipping = after !== undefined;
         let lastGuid: string | undefined;
         let matched = 0;
 
-        for (let i = start; i < end; i++) {
-          const t = index.tree.ordered[i]!;
-          const relDepth = t.depth - rootNode.depth;
-          if (relDepth > depth) continue;
+        // Depth-first, pre-order, never below `depth`: the same order the stored tree has.
+        const stack: [TreeNode, number][] = [[rootNode, 0]];
+        while (stack.length) {
+          const [t, relDepth] = stack.pop()!;
+          if (relDepth < depth) {
+            const kids = childrenOf(t);
+            for (let i = kids.length - 1; i >= 0; i--) stack.push([kids[i]!, relDepth + 1]);
+          }
           if (typeFilter && !typeFilter.has(str(t.node, 'type') ?? '')) continue;
           if (skipping) {
             if (t.key === after) skipping = false;

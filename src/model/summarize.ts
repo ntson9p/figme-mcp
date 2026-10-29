@@ -25,6 +25,8 @@ export interface NodeSummary {
   /** `"134x40"` — denser than `{x,y}` and still trivially parseable. */
   size?: string;
   children?: number;
+  /** The layer itself is hidden — set directly, or by a component property. */
+  hidden?: boolean;
   page?: string;
 }
 
@@ -38,6 +40,7 @@ export function summarize(t: TreeNode, opts: { page?: boolean } = {}): NodeSumma
     name: str(t.node, 'name'),
     size: w !== undefined && h !== undefined ? `${r2(w)}x${r2(h)}` : undefined,
     children: t.children.length || undefined,
+    hidden: bool(t.node, 'visible') === false || undefined,
     page: opts.page && t.page ? str(t.page.node, 'name') : undefined,
   }) as NodeSummary;
 }
@@ -50,6 +53,7 @@ export function outlineLine(t: TreeNode, depth: number): string {
   parts.push(JSON.stringify(s.name ?? ''));
   parts.push(`(${s.guid})`);
   if (s.children) parts.push(`x${s.children}`);
+  if (s.hidden) parts.push('hidden');
   return parts.join(' ');
 }
 
@@ -409,7 +413,10 @@ function componentOf(idx: FileIndex, t: TreeNode): Record<string, unknown> | und
   const type = str(node, 'type');
   if (type === 'INSTANCE') {
     const symbolData = obj(node, 'symbolData');
-    const symbolId = guidKey(obj(symbolData, 'symbolID') as Guid | undefined);
+    // A layer inside an instance may have had its symbol swapped by a record or a property.
+    const symbolId =
+      guidKey(obj(node, 'overriddenSymbolID') as Guid | undefined) ??
+      guidKey(obj(symbolData, 'symbolID') as Guid | undefined);
     const symbol = symbolId ? idx.node(symbolId) : undefined;
     return compact({
       role: 'INSTANCE',

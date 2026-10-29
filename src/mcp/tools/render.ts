@@ -22,7 +22,8 @@ export const DESCRIPTION = [
   'from the file. Rendering is best-effort: read `approximated` and `unsupported` in the report',
   'before trusting fine details; exact values remain available from fig_node / fig_style /',
   'fig_text. Default output is PNG at 2x, capped to 1568 px on the longest edge; use `savePath`',
-  'to write a file instead of inlining it.',
+  'to write a file instead of inlining it. A layer inside a component instance (an id like',
+  '"I2:1329;0:2528" from fig_tree) is drawn as that instance shows it.',
 ].join(' ');
 
 /** Above this, base64 inlining costs the caller more than it is worth. */

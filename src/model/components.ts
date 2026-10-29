@@ -99,6 +99,8 @@ export interface OverrideView {
   fields: Record<string, unknown>;
   /** Field names present in the record that this mapper did not translate. */
   otherFields?: string[];
+  /** Applied by an enclosing instance to this nested one, rather than by this instance. */
+  inherited?: boolean;
 }
 
 /** Map one partial NodeChange (an override or a derived record) to a compact field set. */
@@ -147,8 +149,15 @@ export function overrideFields(idx: FileIndex, partial: NodeChange): {
 
 export function instanceOverrides(idx: FileIndex, t: TreeNode, field: string): OverrideView[] {
   const symbolData = field === 'symbolOverrides' ? obj(t.node, 'symbolData') : t.node;
-  const records = objArr(symbolData, field);
+  return overrideViews(idx, t, objArr(symbolData, field));
+}
 
+function overrideViews(
+  idx: FileIndex,
+  t: TreeNode,
+  records: readonly KiwiObject[],
+  inherited = false,
+): OverrideView[] {
   return records.map((record) => {
     const path = objArr(obj(record, 'guidPath'), 'guids')
       .map((g) => guidKey(g as Guid))
@@ -167,6 +176,7 @@ export function instanceOverrides(idx: FileIndex, t: TreeNode, field: string): O
       targetType: target ? str(target.node, 'type') : undefined,
       fields,
       otherFields: otherFields.length ? otherFields : undefined,
+      inherited: inherited || undefined,
     }) as OverrideView;
   });
 }
@@ -183,9 +193,20 @@ export interface InstanceView {
   scaleFactor?: number;
 }
 
-export function instanceView(idx: FileIndex, t: TreeNode): InstanceView {
+/**
+ * `inherited` are the records enclosing instances apply inside this one when it is itself a
+ * layer of an instance (model/scene.ts `inheritedOverrides`), already re-addressed from it.
+ */
+export function instanceView(
+  idx: FileIndex,
+  t: TreeNode,
+  inherited: readonly KiwiObject[] = [],
+): InstanceView {
   const symbolData = obj(t.node, 'symbolData');
-  const symbolId = guidKey(obj(symbolData, 'symbolID') as Guid | undefined);
+  // A layer inside an instance may have had its symbol swapped by a record or a property.
+  const symbolId =
+    guidKey(obj(t.node, 'overriddenSymbolID') as Guid | undefined) ??
+    guidKey(obj(symbolData, 'symbolID') as Guid | undefined);
   const symbol = symbolId ? idx.node(symbolId) : undefined;
   const symbolParent = symbol?.parent;
 
@@ -219,7 +240,10 @@ export function instanceView(idx: FileIndex, t: TreeNode): InstanceView {
         })
       : undefined,
     propAssignments: assignments.length ? assignments : undefined,
-    overrides: instanceOverrides(idx, t, 'symbolOverrides'),
+    overrides: [
+      ...instanceOverrides(idx, t, 'symbolOverrides'),
+      ...overrideViews(idx, t, inherited, true),
+    ],
     derivedRecords: objArr(t.node, 'derivedSymbolData').length || undefined,
     scaleFactor: num(symbolData, 'uniformScaleFactor') === 1 ? undefined : num(symbolData, 'uniformScaleFactor'),
   }) as InstanceView;

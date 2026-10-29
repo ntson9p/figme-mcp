@@ -28,6 +28,9 @@ fig_style     → display:flex, direction:row, gap:8, padding:"8px 16px",
 - **Everything in the file.** Layers and geometry, auto-layout, fills, strokes, effects, text with
   mixed styles, components and instances, variables, prototype links and images. Layout comes
   back as CSS flexbox, colours as hex, and colours bound to variables keep their token names.
+- **What Figma shows, not just what it stores.** The layers inside a component instance come
+  back with the instance's overrides applied, under the ids Figma itself gives them, and a
+  shared style reports its live value rather than the stale copy cached beside it.
 - **Pictures as well as numbers.** `fig_render` draws any layer as a PNG or SVG.
 - **Small responses.** Even on a 116,000-node file, a response stays around 20 KB. Results are
   shallow by default, filterable and paged.
@@ -186,7 +189,7 @@ Your agent picks these on its own; you don't need to name them.
 | Tool | What it gives the agent |
 |---|---|
 | `fig_overview` | The pages, node counts, and how many components, variables and images the file has |
-| `fig_tree` | The layer tree under a node, a few levels at a time |
+| `fig_tree` | The layer tree under a node, a few levels at a time, instances opened |
 | `fig_node` | One layer in detail: size, position, corner radii, auto-layout, children |
 | `fig_find` | Layers whose name or text contains a string |
 | `fig_text` | All the text, with fonts and mixed styles |
