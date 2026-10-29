@@ -234,6 +234,12 @@ instead. Figma's "Auto" line height reads as `"auto"` (CSS `normal`, the font's 
 height) rather than `"100%"`, and a percent letter spacing as `em`. `fig_text` and `fig_node`
 use the same values.
 
+A linear gradient paint also comes back as `css`, e.g.
+`linear-gradient(90deg, #3A87FD00 0%, #3A87FD 85.49%)`: its angle and stop positions follow the
+paint's transform on the node's own box, and where both the colour and the alpha change between
+two stops, extra stops reproduce Figma's (unpremultiplied) blend, which CSS's premultiplied one
+would not. Drawn by a browser it matches `fig_render` to within a level or two per channel.
+
 Stroke weight, alignment, caps and dashes come back only for a node with a stroke that shows.
 When the sides of a stroke are set independently, `strokeWeights` gives each side, e.g.
 `{ "top": 0, "right": 0, "bottom": 0.5, "left": 0 }` for a hairline under a navigation bar —

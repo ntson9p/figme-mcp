@@ -334,3 +334,26 @@ describe('iOS 16 UI Kit — strokes', { skip }, () => {
     assert.deepEqual((tabs.json['node'] as Record<string, any>)['strokeWeights'], { top: 0.5, right: 0, bottom: 0, left: 0 });
   });
 });
+
+describe('iOS 16 UI Kit — gradients', { skip }, () => {
+  it('a linear gradient fill comes back with its CSS', async () => {
+    // Checked in a browser: drawn by Edge, this CSS matches fig_render to under half a level.
+    const r = await harness.call('fig_style', { file, guid: '70:4471' });
+    const [fill] = (r.json['style'] as Record<string, any>)['fills'];
+    assert.equal(fill.css, 'linear-gradient(90deg, #3A87FD00 0%, #3A87FD 85.49%)');
+  });
+
+  it('every linear gradient fill on a box has a CSS form', () => {
+    let gradients = 0;
+    const missing: string[] = [];
+    for (const t of index.tree.ordered) {
+      for (const fill of (styleBlock(index, t)['fills'] as Record<string, unknown>[] | undefined) ?? []) {
+        if (fill['type'] !== 'GRADIENT_LINEAR') continue;
+        gradients++;
+        if (typeof fill['css'] !== 'string' || !String(fill['css']).startsWith('linear-gradient(')) missing.push(t.key);
+      }
+    }
+    assert.ok(gradients >= 50, `${gradients} linear gradients`);
+    assert.deepEqual(missing, []);
+  });
+});

@@ -15,7 +15,7 @@ import { guidKey, breadcrumb, type Guid, type TreeNode } from './tree.js';
 import { resolveOverridePath } from './instance.js';
 import { bool, colorHex, compact, jsonSafe, num, obj, objArr, r2, str } from './access.js';
 import {
-  cornerRadiusOf, effectView, paintView, sideWeights, styleRefsOf, textBasics,
+  cornerRadiusOf, effectView, paintBox, paintView, sideWeights, styleRefsOf, textBasics,
 } from './summarize.js';
 import { describeVariableData } from './variables.js';
 import { applyStyles } from './styles.js';
@@ -146,9 +146,9 @@ export function overrideFields(idx: FileIndex, partial: NodeChange): {
     visible: bool(partial, 'visible'),
     opacity: r2(num(partial, 'opacity')),
     // An empty fills array is itself an override ("remove all fills"), so report the count.
-    fills: 'fillPaints' in live ? fills.map((p) => paintView(idx, p)) : undefined,
+    fills: 'fillPaints' in live ? fills.map((p) => paintView(idx, p, paintBox(partial))) : undefined,
     fillsCleared: 'fillPaints' in live && fills.length === 0 ? true : undefined,
-    strokes: 'strokePaints' in live ? strokes.map((p) => paintView(idx, p)) : undefined,
+    strokes: 'strokePaints' in live ? strokes.map((p) => paintView(idx, p, paintBox(partial))) : undefined,
     strokesCleared: 'strokePaints' in live && strokes.length === 0 ? true : undefined,
     // A record writes the stroke-side and corner groups whole, so they read like a node's.
     strokeWeight: r2(num(partial, 'strokeWeight')),

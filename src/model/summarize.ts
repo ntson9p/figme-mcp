@@ -143,7 +143,103 @@ export function sideWeights(node: NodeChange): Record<string, number> | undefine
 
 // --------------------------------------------------------------------------- paints & effects
 
-export function paintView(idx: FileIndex, p: KiwiObject): Record<string, unknown> {
+/** The size of the box a paint fills, which a gradient's direction is relative to. */
+export interface PaintBox {
+  readonly w: number;
+  readonly h: number;
+}
+
+/** The node's own box, for `paintView`. */
+export function paintBox(node: NodeChange): PaintBox | undefined {
+  const size = obj(node, 'size');
+  const w = num(size, 'x');
+  const h = num(size, 'y');
+  return w !== undefined && h !== undefined && w > 0 && h > 0 ? { w, h } : undefined;
+}
+
+interface GradientStop {
+  readonly at: number;
+  readonly r: number;
+  readonly g: number;
+  readonly b: number;
+  readonly a: number;
+}
+
+/** Steps a stretch between two stops is cut into when CSS would blend it differently. */
+const BLEND_STEPS = 8;
+
+/**
+ * Figma blends gradient colours unpremultiplied, CSS premultiplied: across a stretch where both
+ * the colour and the alpha change — transparent white into 50 % black — CSS loses the pale
+ * fringe Figma draws. Sampling such a stretch as Figma blends it keeps the two within a level or
+ * two; a stretch where only one of them changes blends the same either way and is left alone.
+ */
+function blendLikeFigma(stops: readonly GradientStop[]): GradientStop[] {
+  const out: GradientStop[] = [];
+  stops.forEach((s, i) => {
+    const prev = stops[i - 1];
+    if (prev && prev.a !== s.a && (prev.r !== s.r || prev.g !== s.g || prev.b !== s.b)) {
+      for (let k = 1; k < BLEND_STEPS; k++) {
+        const t = k / BLEND_STEPS;
+        const mix = (x: number, y: number): number => x + (y - x) * t;
+        out.push({
+          at: mix(prev.at, s.at), r: mix(prev.r, s.r), g: mix(prev.g, s.g), b: mix(prev.b, s.b), a: mix(prev.a, s.a),
+        });
+      }
+    }
+    out.push(s);
+  });
+  return out;
+}
+
+/**
+ * A linear gradient as CSS, for the box it fills. `transform` maps the normalized box to
+ * gradient space, where the gradient runs along x from 0 to 1 (F7), so its value at a pixel is
+ * `m00·x/w + m01·y/h + m02`: it grows along `(m00/w, m01/h)` — CSS's angle — and each stop goes
+ * where CSS's gradient line (through the centre, `|w·sin θ| + |h·cos θ|` long) reaches that
+ * value. Exact for any transform; stops take the paint's opacity into their alpha. Drawn by a
+ * browser, it matches `fig_render` to a mean of under one level per channel.
+ */
+function linearGradientCss(p: KiwiObject, box: PaintBox): string | undefined {
+  const m = obj(p, 'transform');
+  const a = num(m, 'm00') ?? 1;
+  const b = num(m, 'm01') ?? 0;
+  const c = num(m, 'm02') ?? 0;
+  const nx = a / box.w;
+  const ny = b / box.h;
+  const rate = Math.hypot(nx, ny);
+  if (!(rate > 1e-9)) return undefined;
+  const theta = Math.atan2(nx, -ny);
+  const line = Math.abs(box.w * Math.sin(theta)) + Math.abs(box.h * Math.cos(theta));
+  const atCentre = a / 2 + b / 2 + c;
+  const opacity = num(p, 'opacity') ?? 1;
+  const stops: GradientStop[] = objArr(p, 'stops')
+    .map((s) => {
+      const color = obj(s, 'color');
+      return {
+        at: Math.max(0, Math.min(1, num(s, 'position') ?? 0)),
+        r: num(color, 'r') ?? 0,
+        g: num(color, 'g') ?? 0,
+        b: num(color, 'b') ?? 0,
+        a: (num(color, 'a') ?? 1) * opacity,
+      };
+    })
+    .sort((x, y) => x.at - y.at);
+  if (stops.length === 0) return undefined;
+  const css = blendLikeFigma(stops).map(
+    (s) =>
+      `${colorHex({ r: s.r, g: s.g, b: s.b, a: s.a })} ` +
+      `${r2(((s.at - atCentre) / (rate * line) + 0.5) * 100)}%`,
+  );
+  const degrees = (((theta * 180) / Math.PI) % 360 + 360) % 360;
+  return `linear-gradient(${r2(degrees)}deg, ${css.join(', ')})`;
+}
+
+/**
+ * One paint. Given the box it fills, a linear gradient also comes back as `css` — its direction
+ * is otherwise nowhere in the output.
+ */
+export function paintView(idx: FileIndex, p: KiwiObject, box?: PaintBox): Record<string, unknown> {
   const image = obj(p, 'image');
   const stops = objArr(p, 'stops').map((s) =>
     compact({ at: r2(num(s, 'position')), color: colorHex(obj(s, 'color')) }),
@@ -157,6 +253,7 @@ export function paintView(idx: FileIndex, p: KiwiObject): Record<string, unknown
     visible: bool(p, 'visible') === false ? false : undefined,
     blendMode: str(p, 'blendMode') === 'NORMAL' ? undefined : str(p, 'blendMode'),
     stops: stops.length ? stops : undefined,
+    css: box && str(p, 'type') === 'GRADIENT_LINEAR' ? linearGradientCss(p, box) : undefined,
     imageHash: hex(bytes(image, 'hash')),
     imageName: str(image, 'name'),
     imageScaleMode: str(p, 'imageScaleMode'),
@@ -552,8 +649,9 @@ export function nodeDetail(
   // Paints, effects and typography as Figma shows them: a referenced style wins (F19, F22).
   const live = applyStyles(idx, node, { text: true });
   const maxChildren = opts.maxChildren ?? 100;
-  const fills = objArr(live, 'fillPaints').map((p) => paintView(idx, p));
-  const strokes = objArr(live, 'strokePaints').map((p) => paintView(idx, p));
+  const box = paintBox(node);
+  const fills = objArr(live, 'fillPaints').map((p) => paintView(idx, p, box));
+  const strokes = objArr(live, 'strokePaints').map((p) => paintView(idx, p, box));
   const effects = objArr(live, 'effects').map((e) => effectView(idx, e));
   const images = nodeImageHashes(live);
   const dashPattern = node['dashPattern'];
@@ -643,7 +741,7 @@ export function typography(
     align: str(node, 'textAlignHorizontal'),
     verticalAlign: str(node, 'textAlignVertical'),
     color: solid ? shownColor(solid) : undefined,
-    fills: shown.length && !solid ? shown.map((p) => paintView(idx, p)) : undefined,
+    fills: shown.length && !solid ? shown.map((p) => paintView(idx, p, paintBox(node))) : undefined,
     // Runs express most overrides as a shared-style ref, so keep them here by default; the
     // caller turns them off when it already reports the node's style refs separately.
     styles: opts.includeStyleRefs === false ? undefined : styleRefsOf(idx, node),
@@ -735,8 +833,9 @@ export function styleBlock(idx: FileIndex, t: TreeNode): Record<string, unknown>
 
   // Paints, effects and typography as Figma shows them: a referenced style wins (F19, F22).
   const live = applyStyles(idx, node, { text: true });
-  const fills = objArr(live, 'fillPaints').map((p) => paintView(idx, p));
-  const strokes = objArr(live, 'strokePaints').map((p) => paintView(idx, p));
+  const box = paintBox(node);
+  const fills = objArr(live, 'fillPaints').map((p) => paintView(idx, p, box));
+  const strokes = objArr(live, 'strokePaints').map((p) => paintView(idx, p, box));
   const effects = objArr(live, 'effects').map((e) => effectView(idx, e));
   const type = str(node, 'type');
   const dashPattern = node['dashPattern'];
