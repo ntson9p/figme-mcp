@@ -265,6 +265,21 @@ glyphs); the run is `textData.characterStyleIDs[firstCharacter]`, one entry per 
 an implicit 0 past the end of the array (413 texts have a full array, 101 a shorter one, none a
 longer one).
 
+**F22 — A referenced text style is the live source of its typography** (measured 2026-10-30
+on the iOS 16 UI Kit community file). `styleIdForText` behaves like F19's colour references:
+the `fontName`, `fontSize`, `lineHeight` and `letterSpacing` cached beside it are what the node
+looked like when it was last touched. 75 of the file's 1 474 text nodes with a local text style
+disagree with it, and wherever they do, Figma's own layout of the text (`derivedTextData`:
+glyph `fontSize`, `fontMetaData`) follows the STYLE — 39 of 39 sizes, 22 of 22 families, 26 of
+26 weights. The DatePicker header `55:4649` caches 20 px SF Pro Display at +0.38 px while its
+glyphs are 17 px SF Pro Text at −0.408 px, the "Body/Bold" style. A text style defines font,
+size, line height, letter spacing, paragraph spacing and indent, case and decoration — not
+alignment or colour, which its node carries only for its own preview. The renderer never needs
+this (glyphs are baked, F5), but every number the inspection tools report does: since
+2026-10-30 `fig_node`, `fig_style`, `fig_text` and `fig_instance` resolve F19 and F22 through
+the same `model/styles.ts` the exporter uses (765 stored nodes of that file cache a fill that
+disagrees with their colour style).
+
 **F15 — Existing APIs to reuse** (do not duplicate): `FileCache.get(file): CacheEntry
 { fig, index }`, `FileIndex.node(guid)`, `FileIndex.subtreeRange(root)`, `TreeNode
 { key, node, children, parent }`, accessors `str/num/bool/obj/arr/objArr/bytes/hex` in
@@ -1393,7 +1408,8 @@ fixtures; check each file's licence before committing it.
     every switched-off icon is drawn.
 23. **The cached paint beside a style reference lies** (F19). Resolve `styleIdFor*` to the
     local style's paints on nodes, on records and on text-run entries; keep the cache only for
-    remote styles and the detached sentinel.
+    remote styles and the detached sentinel. The cached typography beside `styleIdForText`
+    lies the same way (F22) — it changes no pixel, but every reported font size does.
 24. **Measure inside instances on the effective node** (F20). Bounds, mask regions and clips
     computed on the raw symbol tree are the symbol's size; memoise per instance scope, and drop
     geometry a resizing record did not re-derive.

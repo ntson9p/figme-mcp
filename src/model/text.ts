@@ -12,6 +12,7 @@ import type { FileIndex } from './index.js';
 import type { TreeNode } from './tree.js';
 import { compact, num, obj, objArr, str } from './access.js';
 import { typography } from './summarize.js';
+import { applyStyles } from './styles.js';
 
 export interface TextRun {
   /** UTF-16 code-unit offsets: `characters.slice(start, end)`. */
@@ -56,10 +57,12 @@ export function textView(idx: FileIndex, t: TreeNode, includeRuns: boolean): Tex
 
   const ids = (textData?.['characterStyleIDs'] as number[] | undefined) ?? [];
   const hasStyledRuns = ids.some((id) => id !== 0);
+  // The typography Figma lays the text out with: a referenced style wins over the cached copy
+  // (F19, F22), for the node and for each run's override entry alike.
   const view: TextView = {
     characters,
     characterCount: characters.length,
-    baseStyle: orUndefined(typography(idx, t.node)),
+    baseStyle: orUndefined(typography(idx, applyStyles(idx, t.node, { text: true }))),
     hasStyledRuns,
   };
   if (!includeRuns) return view;
@@ -83,7 +86,9 @@ export function textView(idx: FileIndex, t: TreeNode, includeRuns: boolean): Tex
         end: i,
         text: characters.slice(start, i),
         styleID,
-        style: override ? orUndefined(typography(idx, override)) : undefined,
+        style: override
+          ? orUndefined(typography(idx, applyStyles(idx, override, { text: true, partial: true })))
+          : undefined,
       }) as TextRun,
     );
     start = i;

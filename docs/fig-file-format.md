@@ -407,3 +407,22 @@ no `firstCharacter` — is the ellipsis Figma inserted (920 of 920 truncated tex
 run (12 576 of 12 576 such glyphs); the run of a glyph is `textData.characterStyleIDs[
 firstCharacter]`, one entry per character with an implicit 0 past the end of the array (413
 texts store a full array, 101 a shorter one, none a longer one).
+
+## 9. Addendum — measured on the iOS 16 UI Kit community file (2026-10-30)
+
+A second, public design (Figma Community, 8 267 nodes, `fig-kiwi` version 106) used to check the
+inspection tools against Figma's own layout data.
+
+### 9.1 A text style reference is live; the typography cached beside it is not
+
+§8.7 holds for `styleIdForText` too. 75 of the 1 474 text nodes that reference a local text
+style cache a `fontName`, `fontSize`, `lineHeight` or `letterSpacing` that disagrees with it, and
+in every case `derivedTextData` — the layout Figma computed — follows the style: 39 of 39 glyph
+font sizes, 22 of 22 font families and 26 of 26 weights (`fontMetaData`). Example: the DatePicker
+header `55:4649` caches SF Pro Display Semibold 20 px, line height 24 px, letter spacing +0.38 px;
+its glyphs are 17 px SF Pro Text Semibold at a −0.408 px advance and its baseline is 22 px —
+exactly its "Body/Bold" style. Every text style node in the file carries `fontName`, `fontSize`,
+`lineHeight` and `letterSpacing`; `textCase`, `textDecoration` and paragraph spacing are written
+only when not the default. The same file also confirms §8.7 at scale: 765 stored nodes cache a
+fill that disagrees with their colour style, 50 a stroke and 8 an effect, and the styles there
+are referenced by `guid` (they were never published), not by `assetRef`.

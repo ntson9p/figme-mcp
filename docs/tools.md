@@ -182,6 +182,11 @@ the node behaves inside its parent's layout.
 For TEXT nodes it also returns `typography` and resolves shared text/fill styles to the values
 they define (`styles.text.defines`).
 
+Every paint, effect and typography value that comes from a shared style is the style's **live**
+value, the one Figma draws and lays the text out with — not the copy cached on the node beside
+the reference, which can be stale. `fig_node`, `fig_text` and `fig_instance` report the same live
+values, and name the style whether it was published (`assetRef`) or not (`guid`).
+
 ### 7. `fig_components` — the component catalogue
 
 SYMBOL nodes with their component set, property definitions and defaults, and instance counts —

@@ -14,8 +14,9 @@ import type { FileIndex } from './index.js';
 import { guidKey, breadcrumb, type Guid, type TreeNode } from './tree.js';
 import { resolveOverridePath } from './instance.js';
 import { bool, colorHex, compact, jsonSafe, num, obj, objArr, r2, str } from './access.js';
-import { effectView, paintView, textBasics } from './summarize.js';
+import { effectView, paintView, styleRefsOf, textBasics } from './summarize.js';
 import { describeVariableData } from './variables.js';
+import { applyStyles } from './styles.js';
 
 /** Fields present on every override/derived record that are addressing, not content. */
 const OVERRIDE_META = new Set(['guidPath', 'overrideLevel', 'guid', 'phase', 'parentIndex']);
@@ -105,11 +106,14 @@ export function overrideFields(idx: FileIndex, partial: NodeChange): {
   fields: Record<string, unknown>;
   otherFields: string[];
 } {
+  // A record that names a style shows the style's live value, not the copy cached beside the
+  // reference — or the nothing there when the record carries only the reference (F19, F22).
+  const live = applyStyles(idx, partial, { text: true, partial: true });
   const size = obj(partial, 'size');
   const transform = obj(partial, 'transform');
-  const fills = objArr(partial, 'fillPaints');
-  const strokes = objArr(partial, 'strokePaints');
-  const effects = objArr(partial, 'effects');
+  const fills = objArr(live, 'fillPaints');
+  const strokes = objArr(live, 'strokePaints');
+  const effects = objArr(live, 'effects');
   const w = num(size, 'x');
   const h = num(size, 'y');
 
@@ -120,20 +124,22 @@ export function overrideFields(idx: FileIndex, partial: NodeChange): {
     visible: bool(partial, 'visible'),
     opacity: r2(num(partial, 'opacity')),
     // An empty fills array is itself an override ("remove all fills"), so report the count.
-    fills: 'fillPaints' in partial ? fills.map((p) => paintView(idx, p)) : undefined,
-    fillsCleared: 'fillPaints' in partial && fills.length === 0 ? true : undefined,
-    strokes: 'strokePaints' in partial ? strokes.map((p) => paintView(idx, p)) : undefined,
-    strokesCleared: 'strokePaints' in partial && strokes.length === 0 ? true : undefined,
+    fills: 'fillPaints' in live ? fills.map((p) => paintView(idx, p)) : undefined,
+    fillsCleared: 'fillPaints' in live && fills.length === 0 ? true : undefined,
+    strokes: 'strokePaints' in live ? strokes.map((p) => paintView(idx, p)) : undefined,
+    strokesCleared: 'strokePaints' in live && strokes.length === 0 ? true : undefined,
     effects: effects.length ? effects.map((e) => effectView(idx, e)) : undefined,
-    text: textBasics(partial),
+    text: textBasics(live),
     cornerRadius: r2(num(partial, 'cornerRadius')),
     symbolID: guidKey(obj(obj(partial, 'symbolData'), 'symbolID') as Guid | undefined),
+    styles: styleRefsOf(idx, partial),
   });
 
   const known = new Set([
     'size', 'transform', 'visible', 'opacity', 'fillPaints', 'strokePaints', 'effects',
     'textData', 'fontName', 'fontSize', 'lineHeight', 'letterSpacing', 'cornerRadius',
-    'symbolData',
+    'symbolData', 'styleIdForFill', 'styleIdForStrokeFill', 'styleIdForText', 'styleIdForEffect',
+    'styleIdForGrid',
   ]);
   const otherFields = Object.keys(partial).filter((k) => !known.has(k) && !OVERRIDE_META.has(k));
   return { fields, otherFields };

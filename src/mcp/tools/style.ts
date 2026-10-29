@@ -14,7 +14,8 @@ export const DESCRIPTION = [
   'corner radii, typography, and auto-layout translated into CSS flexbox terms',
   '(display, direction, gap, padding, justifyContent, alignItems, sizing) plus how the node',
   'behaves inside its parent layout (flexGrow, alignSelf, margin).',
-  'Shared styles and variable bindings are named whenever they resolve inside this file.',
+  'Shared styles and variable bindings are named whenever they resolve inside this file, and a',
+  'value that comes from a shared style is that style\'s live value.',
 ].join(' ');
 
 export function register(server: McpServer, ctx: ToolContext): void {

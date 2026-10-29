@@ -16,6 +16,7 @@ import {
   assetRefString, bool, bytes, colorHex, compact, hex, jsonSafe, num, obj, objArr, r2, str,
 } from './access.js';
 import { describeVariableData } from './variables.js';
+import { applyStyles, DETACHED_STYLE_GUID, resolveStyle } from './styles.js';
 
 export interface NodeSummary {
   guid: string;
@@ -278,10 +279,12 @@ const STYLE_REF_FIELDS: Record<string, string> = {
 /**
  * Shared-style references.
  *
- * A style definition is stored as an ordinary (hidden) node parked on a canvas, carrying the
- * publishable `key` that `styleIdFor*.assetRef.key` points at — text styles are TEXT nodes, fill
- * styles are ROUNDED_RECTANGLE nodes. So a style used from the same file resolves to a real node
- * and, with `resolve`, to the values it defines. Styles from other libraries stay opaque refs.
+ * A style definition is stored as an ordinary (hidden) node parked on a canvas — text styles are
+ * TEXT nodes, fill styles are ROUNDED_RECTANGLE nodes. A published style is referenced by the
+ * publishable `key` it carries (`styleIdFor*.assetRef.key`), a style that was never published by
+ * its guid (`styleIdFor*.guid`). Either way a style used from the same file resolves to a real
+ * node and, with `resolve`, to the values it defines. Styles from other libraries stay opaque
+ * refs, and the detached-style sentinel is no style at all.
  */
 export function styleRefsOf(
   idx: FileIndex,
@@ -292,17 +295,22 @@ export function styleRefsOf(
   for (const [field, label] of Object.entries(STYLE_REF_FIELDS)) {
     const ref = obj(node, field);
     if (!ref) continue;
-    const local = idx.resolveAssetRef(ref);
     const guid = guidKey(obj(ref, 'guid') as Guid | undefined);
+    const assetRef = assetRefString(ref);
+    if (guid === DETACHED_STYLE_GUID && !assetRef) continue;
+    const local = idx.resolveAssetRef(ref) ?? resolveStyle(idx, ref);
     out[label] = compact({
       name: local ? str(local.node, 'name') : undefined,
       guid: local?.key ?? guid,
-      assetRef: assetRefString(ref),
+      assetRef,
       defines: opts.resolve && local ? styleDefinition(idx, label, local.node) : undefined,
     });
   }
   return orUndefined(out);
 }
+
+/** Typography fields a text style does not define: its node carries them only for its preview. */
+const NOT_IN_TEXT_STYLE = ['color', 'fills', 'align', 'verticalAlign', 'styles'] as const;
 
 /** The values a locally-defined style carries: typography for text, paints for fill/stroke. */
 function styleDefinition(
@@ -310,7 +318,11 @@ function styleDefinition(
   label: string,
   definition: NodeChange,
 ): Record<string, unknown> | undefined {
-  if (label === 'text') return orUndefined(typography(idx, definition));
+  if (label === 'text') {
+    const defined: Record<string, unknown> = typography(idx, definition);
+    for (const field of NOT_IN_TEXT_STYLE) delete defined[field];
+    return orUndefined(defined);
+  }
   if (label === 'effect') {
     const effects = objArr(definition, 'effects').map((e) => effectView(idx, e));
     return effects.length ? { effects } : undefined;
@@ -428,11 +440,13 @@ export function nodeDetail(
   opts: NodeDetailOptions = {},
 ): Record<string, unknown> {
   const node = t.node;
+  // Paints, effects and typography as Figma shows them: a referenced style wins (F19, F22).
+  const live = applyStyles(idx, node, { text: true });
   const maxChildren = opts.maxChildren ?? 100;
-  const fills = objArr(node, 'fillPaints').map((p) => paintView(idx, p));
-  const strokes = objArr(node, 'strokePaints').map((p) => paintView(idx, p));
-  const effects = objArr(node, 'effects').map((e) => effectView(idx, e));
-  const images = nodeImageHashes(node);
+  const fills = objArr(live, 'fillPaints').map((p) => paintView(idx, p));
+  const strokes = objArr(live, 'strokePaints').map((p) => paintView(idx, p));
+  const effects = objArr(live, 'effects').map((e) => effectView(idx, e));
+  const images = nodeImageHashes(live);
   const dashPattern = node['dashPattern'];
 
   return compact({
@@ -473,7 +487,7 @@ export function nodeDetail(
 
     autoLayout: autoLayoutOf(node),
     layout: layoutChildOf(node),
-    text: textBasics(node),
+    text: textBasics(live),
     component: componentOf(idx, t),
     styles: styleRefsOf(idx, node),
     variables: variableBindingsOf(idx, node),
@@ -493,6 +507,8 @@ export function nodeDetail(
 /**
  * Typography of a node — or of a partial style-override record from a text run — reporting only
  * the fields it actually sets, so a run's block shows exactly what differs from the base style.
+ * Pass the node with its styles applied (`applyStyles(…, { text: true })`): the values cached
+ * beside a style reference can be stale (F19, F22).
  */
 export function typography(
   idx: FileIndex,
@@ -601,9 +617,11 @@ export function styleBlock(idx: FileIndex, t: TreeNode): Record<string, unknown>
     }),
   );
 
-  const fills = objArr(node, 'fillPaints').map((p) => paintView(idx, p));
-  const strokes = objArr(node, 'strokePaints').map((p) => paintView(idx, p));
-  const effects = objArr(node, 'effects').map((e) => effectView(idx, e));
+  // Paints, effects and typography as Figma shows them: a referenced style wins (F19, F22).
+  const live = applyStyles(idx, node, { text: true });
+  const fills = objArr(live, 'fillPaints').map((p) => paintView(idx, p));
+  const strokes = objArr(live, 'strokePaints').map((p) => paintView(idx, p));
+  const effects = objArr(live, 'effects').map((e) => effectView(idx, e));
   const type = str(node, 'type');
   const dashPattern = node['dashPattern'];
 
@@ -627,7 +645,7 @@ export function styleBlock(idx: FileIndex, t: TreeNode): Record<string, unknown>
     layout,
     inParentLayout: inParent,
     typography:
-      type === 'TEXT' ? orUndefined(typography(idx, node, { includeStyleRefs: false })) : undefined,
+      type === 'TEXT' ? orUndefined(typography(idx, live, { includeStyleRefs: false })) : undefined,
     constraints: orUndefined(
       compact({
         horizontal: str(node, 'horizontalConstraint'),
