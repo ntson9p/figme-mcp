@@ -274,6 +274,11 @@ An instance nested in another one can be explained by its sublayer id, e.g.
 `I1340:17094;1147:11418`. Its own overrides are followed by the ones the enclosing instance
 applies inside it, re-addressed from the nested instance and marked `"inherited": true`.
 
+An override's `fields` read like a node's: paints, effects and typography as the style they
+name shows them, `cornerRadius` and per-side `strokeWeights` from the groups a record writes
+whole, a nested instance's `swappedTo` component and `propAssignments`, and a rename as `name`.
+`otherFields` lists only what is really left untranslated.
+
 ### 9. `fig_variables` — design tokens
 
 Every collection with its modes, and every variable with a value per mode. Alias chains are

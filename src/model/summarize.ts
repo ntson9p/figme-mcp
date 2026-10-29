@@ -109,7 +109,7 @@ function geometryOf(t: TreeNode): Record<string, unknown> | undefined {
  * says (F24): on the iOS 16 UI Kit every one of the 162 such corners is square in Figma's own
  * outline, 38 of them beside a non-zero `cornerRadius` — a notification rounded only at the top.
  */
-function cornerRadiusOf(node: NodeChange): unknown {
+export function cornerRadiusOf(node: NodeChange): unknown {
   const uniform = num(node, 'cornerRadius');
   if (!bool(node, 'rectangleCornerRadiiIndependent')) return r2(uniform);
   const corners = [
@@ -131,7 +131,7 @@ function hasVisibleStroke(live: NodeChange): boolean {
  * at its own weight, whatever the node's `strokeWeight` says — the hairline under a navigation
  * bar is `bottom: 0.5` beside a `strokeWeight` of 0, the one over a tab bar `top: 0.5` beside 1.
  */
-function sideWeights(node: NodeChange): Record<string, number> | undefined {
+export function sideWeights(node: NodeChange): Record<string, number> | undefined {
   if (bool(node, 'borderStrokeWeightsIndependent') !== true) return undefined;
   return {
     top: r2(num(node, 'borderTopWeight') ?? 0)!,
