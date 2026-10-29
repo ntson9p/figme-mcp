@@ -103,14 +103,20 @@ function geometryOf(t: TreeNode): Record<string, unknown> | undefined {
   return Object.keys(g).length ? g : undefined;
 }
 
+/**
+ * One radius, or four in CSS order (top-left, top-right, bottom-right, bottom-left). With
+ * independent corners, a corner the record does not write is square, whatever `cornerRadius`
+ * says (F24): on the iOS 16 UI Kit every one of the 162 such corners is square in Figma's own
+ * outline, 38 of them beside a non-zero `cornerRadius` — a notification rounded only at the top.
+ */
 function cornerRadiusOf(node: NodeChange): unknown {
   const uniform = num(node, 'cornerRadius');
   if (!bool(node, 'rectangleCornerRadiiIndependent')) return r2(uniform);
   const corners = [
-    num(node, 'rectangleTopLeftCornerRadius') ?? uniform ?? 0,
-    num(node, 'rectangleTopRightCornerRadius') ?? uniform ?? 0,
-    num(node, 'rectangleBottomRightCornerRadius') ?? uniform ?? 0,
-    num(node, 'rectangleBottomLeftCornerRadius') ?? uniform ?? 0,
+    num(node, 'rectangleTopLeftCornerRadius') ?? 0,
+    num(node, 'rectangleTopRightCornerRadius') ?? 0,
+    num(node, 'rectangleBottomRightCornerRadius') ?? 0,
+    num(node, 'rectangleBottomLeftCornerRadius') ?? 0,
   ].map((v) => r2(v)!);
   return corners.every((v) => v === corners[0]) ? corners[0] : corners;
 }

@@ -436,7 +436,13 @@ not 100 px. It is Figma's "Auto" (the REST API's `INTRINSIC_%`), CSS `line-heigh
 not a CSS `100%`. No other PERCENT line height occurs in the file. A PERCENT letter spacing is a
 percentage of the font size, CSS `em`.
 
-### 9.3 `4294967295:4294967295` is "no guid", in `overrideKey` too
+### 9.3 An independent corner radius that is not written is 0
+
+With `rectangleCornerRadiiIndependent: true`, Figma writes only the corners that are rounded:
+each of the 162 missing `rectangle…CornerRadius` fields in the file is a square corner in the
+node's `fillGeometry`, 38 of them on nodes whose `cornerRadius` is non-zero.
+
+### 9.4 `4294967295:4294967295` is "no guid", in `overrideKey` too
 
 The detached-style sentinel of §8.7 also appears as an `overrideKey`: 30 of the 44 layers that
 carry one carry this value. No record path segment ever equals it; 31 segments address those

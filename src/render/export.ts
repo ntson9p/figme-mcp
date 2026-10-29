@@ -72,17 +72,20 @@ const RECTANGULAR = new Set([
   'GROUP',
 ]);
 
-/** Per-corner radii in SVG order: top-left, top-right, bottom-right, bottom-left. */
-function cornerRadii(node: NodeChange): [number, number, number, number] {
+/**
+ * Per-corner radii in SVG order: top-left, top-right, bottom-right, bottom-left. With independent
+ * corners a corner the record does not write is square, not the uniform radius (F24).
+ */
+export function cornerRadii(node: NodeChange): [number, number, number, number] {
   const uniform = num(node, 'cornerRadius') ?? 0;
   if (bool(node, 'rectangleCornerRadiiIndependent') !== true) {
     return [uniform, uniform, uniform, uniform];
   }
   return [
-    num(node, 'rectangleTopLeftCornerRadius') ?? uniform,
-    num(node, 'rectangleTopRightCornerRadius') ?? uniform,
-    num(node, 'rectangleBottomRightCornerRadius') ?? uniform,
-    num(node, 'rectangleBottomLeftCornerRadius') ?? uniform,
+    num(node, 'rectangleTopLeftCornerRadius') ?? 0,
+    num(node, 'rectangleTopRightCornerRadius') ?? 0,
+    num(node, 'rectangleBottomRightCornerRadius') ?? 0,
+    num(node, 'rectangleBottomLeftCornerRadius') ?? 0,
   ];
 }
 
