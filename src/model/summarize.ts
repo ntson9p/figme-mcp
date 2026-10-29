@@ -289,6 +289,34 @@ export function lengthString(o: KiwiObject | undefined): string | undefined {
   }
 }
 
+/**
+ * A line height as CSS reads it. Figma stores its "Auto" line height — the font's own, about 1.2x
+ * the size — as 100 PERCENT (the REST API calls that unit INTRINSIC_%). On the iOS 16 UI Kit all
+ * 56 such texts are laid out at exactly their font's natural line height, which a CSS `100%`
+ * (1.0x the size) would not give, so it is reported as "auto" (CSS `normal`).
+ */
+export function lineHeightString(o: KiwiObject | undefined): string | undefined {
+  if (str(o, 'units') === 'PERCENT' && num(o, 'value') === 100) return 'auto';
+  return lengthString(o);
+}
+
+/** A letter spacing as CSS reads it: Figma's percent is of the font size, which CSS spells `em`. */
+export function letterSpacingString(o: KiwiObject | undefined): string | undefined {
+  const v = num(o, 'value');
+  if (str(o, 'units') !== 'PERCENT' || v === undefined) return lengthString(o);
+  return `${Math.round(v * 100) / 10_000}em`;
+}
+
+/**
+ * The colour of one SOLID paint as it shows: the paint's own opacity folded into the alpha, so
+ * `#3C3C43` at 60 % comes back as `#3C3C4399` rather than as an opaque colour.
+ */
+function shownColor(paint: KiwiObject): string | undefined {
+  const color = obj(paint, 'color');
+  if (!color) return undefined;
+  return colorHex({ ...color, a: (num(color, 'a') ?? 1) * (num(paint, 'opacity') ?? 1) });
+}
+
 const CHARACTERS_PREVIEW = 400;
 
 export function textBasics(node: NodeChange): Record<string, unknown> | undefined {
@@ -305,8 +333,8 @@ export function textBasics(node: NodeChange): Record<string, unknown> | undefine
       charactersTruncated: truncated || undefined,
       font: font ? `${str(font, 'family') ?? ''} ${str(font, 'style') ?? ''}`.trim() : undefined,
       fontSize: r2(num(node, 'fontSize')),
-      lineHeight: lengthString(obj(node, 'lineHeight')),
-      letterSpacing: lengthString(obj(node, 'letterSpacing')),
+      lineHeight: lineHeightString(obj(node, 'lineHeight')),
+      letterSpacing: letterSpacingString(obj(node, 'letterSpacing')),
       paragraphSpacing: r2(num(node, 'paragraphSpacing')),
       align: str(node, 'textAlignHorizontal'),
       verticalAlign: str(node, 'textAlignVertical'),
@@ -571,21 +599,23 @@ export function typography(
   opts: { includeStyleRefs?: boolean } = {},
 ): Record<string, unknown> {
   const font = obj(node, 'fontName');
-  const fills = objArr(node, 'fillPaints');
-  const solid = fills.find((p) => str(p, 'type') === 'SOLID');
+  // One colour only when one paint shows and it is solid; otherwise every paint that shows.
+  // (An invisible paint, or the first solid under two more, is not the text's colour.)
+  const shown = objArr(node, 'fillPaints').filter((p) => bool(p, 'visible') !== false);
+  const solid = shown.length === 1 && str(shown[0], 'type') === 'SOLID' ? shown[0] : undefined;
   return compact({
     font: font ? `${str(font, 'family') ?? ''} ${str(font, 'style') ?? ''}`.trim() : undefined,
     fontPostScript: str(font, 'postscript'),
     fontSize: r2(num(node, 'fontSize')),
-    lineHeight: lengthString(obj(node, 'lineHeight')),
-    letterSpacing: lengthString(obj(node, 'letterSpacing')),
+    lineHeight: lineHeightString(obj(node, 'lineHeight')),
+    letterSpacing: letterSpacingString(obj(node, 'letterSpacing')),
     paragraphSpacing: r2(num(node, 'paragraphSpacing')),
     textCase: str(node, 'textCase'),
     textDecoration: str(node, 'textDecoration'),
     align: str(node, 'textAlignHorizontal'),
     verticalAlign: str(node, 'textAlignVertical'),
-    color: solid ? colorHex(obj(solid, 'color')) : undefined,
-    fills: fills.length && !solid ? fills.map((p) => paintView(idx, p)) : undefined,
+    color: solid ? shownColor(solid) : undefined,
+    fills: shown.length && !solid ? shown.map((p) => paintView(idx, p)) : undefined,
     // Runs express most overrides as a shared-style ref, so keep them here by default; the
     // caller turns them off when it already reports the node's style refs separately.
     styles: opts.includeStyleRefs === false ? undefined : styleRefsOf(idx, node),

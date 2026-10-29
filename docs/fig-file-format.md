@@ -427,7 +427,16 @@ only when not the default. The same file also confirms §8.7 at scale: 765 store
 fill that disagrees with their colour style, 50 a stroke and 8 an effect, and the styles there
 are referenced by `guid` (they were never published), not by `assetRef`.
 
-### 9.2 `4294967295:4294967295` is "no guid", in `overrideKey` too
+### 9.2 "Auto" line height is `{ value: 100, units: "PERCENT" }`
+
+All 56 text nodes whose live line height is 100 PERCENT are laid out — `derivedTextData.
+baselines[].lineHeight` — at their font's natural line height (`fontMetaData[].fontLineHeight`
+× size, rounded up to a whole pixel by newer text layout versions): 119.34 px for 100 px SF Pro,
+not 100 px. It is Figma's "Auto" (the REST API's `INTRINSIC_%`), CSS `line-height: normal`, and
+not a CSS `100%`. No other PERCENT line height occurs in the file. A PERCENT letter spacing is a
+percentage of the font size, CSS `em`.
+
+### 9.3 `4294967295:4294967295` is "no guid", in `overrideKey` too
 
 The detached-style sentinel of §8.7 also appears as an `overrideKey`: 30 of the 44 layers that
 carry one carry this value. No record path segment ever equals it; 31 segments address those

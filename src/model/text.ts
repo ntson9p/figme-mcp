@@ -35,7 +35,11 @@ export interface TextView {
   hasStyledRuns: boolean;
 }
 
-/** The four fields a copy inventory actually needs, ~6x cheaper than the full typography. */
+/**
+ * The four fields a copy inventory actually needs, ~6x cheaper than the full typography. Text
+ * painted with more than one fill, or with a gradient or image, has no single colour: its fills
+ * come back instead.
+ */
 export function compactStyle(style: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (!style) return undefined;
   return compact({
@@ -43,6 +47,7 @@ export function compactStyle(style: Record<string, unknown> | undefined): Record
     size: style['fontSize'],
     lineHeight: style['lineHeight'],
     color: style['color'],
+    fills: style['color'] === undefined ? style['fills'] : undefined,
   }) as Record<string, unknown>;
 }
 

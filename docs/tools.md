@@ -227,6 +227,13 @@ A frame with Figma's "Auto" spacing comes back as `justifyContent: "space-betwee
 `gap`: Figma ignores the stored gap there, and as a CSS `gap` it would become a minimum that
 overflows a narrower box. `rowGap` appears only on a layout that wraps.
 
+Typography is reported the way CSS reads it. `color` is the one fill that shows, with its
+opacity folded into the alpha — iOS's secondary label is `#3C3C4399`, not an opaque `#3C3C43`;
+text painted with several fills, or a gradient, has no single colour and reports `fills`
+instead. Figma's "Auto" line height reads as `"auto"` (CSS `normal`, the font's natural line
+height) rather than `"100%"`, and a percent letter spacing as `em`. `fig_text` and `fig_node`
+use the same values.
+
 ### 7. `fig_components` — the component catalogue
 
 SYMBOL nodes with their component set, property definitions and defaults, and instance counts —

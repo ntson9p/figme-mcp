@@ -16,6 +16,7 @@ import { parseFig } from '../../dist/fig/parse.js';
 import { FileIndex } from '../../dist/model/index.js';
 import { styleBlock } from '../../dist/model/summarize.js';
 import { resolveScene, sceneOf } from '../../dist/model/scene.js';
+import { applyStyles } from '../../dist/model/styles.js';
 import { textView } from '../../dist/model/text.js';
 import { connect, type Harness } from '../fixtures/mcp.ts';
 
@@ -260,5 +261,53 @@ describe('iOS 16 UI Kit — component instances are walked into (F17, F18)', { s
     } while (cursor && pages < 100);
     assert.equal(cursor, undefined, 'the walk finishes');
     assert.ok(seen.size > 1_000);
+  });
+});
+
+describe('iOS 16 UI Kit — typography as Figma lays it out', { skip }, () => {
+  it('every auto line height is laid out at the font\'s natural height, and reads as auto', () => {
+    // Figma lays an auto line height out at the font's natural height, rounded up to a whole
+    // pixel by newer text layout versions (28.64 -> 29). The live value is the text style's when
+    // the node has one (F22): a stale 100 PERCENT beside a 24 px style is laid out at 24 px.
+    let checked = 0;
+    const wrong: string[] = [];
+    for (const t of index.tree.ordered) {
+      if (t.node['type'] !== 'TEXT') continue;
+      const live = applyStyles(index, t.node, { text: true });
+      const lineHeight = live['lineHeight'] as { value?: number; units?: string } | undefined;
+      if (lineHeight?.units !== 'PERCENT' || lineHeight.value !== 100) continue;
+      const derived = t.node['derivedTextData'] as
+        | { baselines?: { lineHeight: number }[]; fontMetaData?: { fontLineHeight: number }[] }
+        | undefined;
+      const laidOut = derived?.baselines?.[0]?.lineHeight;
+      const natural = derived?.fontMetaData?.[0]?.fontLineHeight;
+      if (laidOut === undefined || natural === undefined) continue;
+      checked++;
+      const exact = natural * (live['fontSize'] as number);
+      const reported = textView(index, t, false)!.baseStyle!['lineHeight'];
+      if (laidOut < exact - 0.01 || laidOut > Math.ceil(exact) + 0.01 || reported !== 'auto') {
+        wrong.push(`${t.key}: laid out ${laidOut}, natural ${exact}, reported ${reported}`);
+      }
+    }
+    assert.ok(checked >= 50, `${checked} auto line heights checked`);
+    assert.deepEqual(wrong, []);
+  });
+
+  it('a translucent label keeps its alpha in fig_text', async () => {
+    // "Label Color/Light/Tertiary" is #3C3C43 at 30 %: the weekday labels of the DatePicker.
+    const r = await harness.call('fig_text', { file, scope: 'I1319:26210;55:4468' });
+    const sun = (r.json['texts'] as Record<string, any>[])[0]!;
+    assert.equal(sun['characters'], 'SUN');
+    assert.equal(sun['style'].color, '#3C3C434D');
+  });
+
+  it('the lock screen clock has no single colour: its fills come back', async () => {
+    const r = await harness.call('fig_style', { file, guid: '1324:20951' });
+    const typography = (r.json['style'] as Record<string, any>)['typography'];
+    assert.equal(typography.color, undefined);
+    assert.deepEqual(
+      (typography.fills as { type: string; blendMode?: string }[]).map((p) => [p.type, p.blendMode]),
+      [['SOLID', 'OVERLAY'], ['SOLID', 'SOFT_LIGHT'], ['GRADIENT_LINEAR', 'OVERLAY']],
+    );
   });
 });
