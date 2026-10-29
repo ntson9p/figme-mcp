@@ -234,6 +234,11 @@ instead. Figma's "Auto" line height reads as `"auto"` (CSS `normal`, the font's 
 height) rather than `"100%"`, and a percent letter spacing as `em`. `fig_text` and `fig_node`
 use the same values.
 
+Stroke weight, alignment, caps and dashes come back only for a node with a stroke that shows.
+When the sides of a stroke are set independently, `strokeWeights` gives each side, e.g.
+`{ "top": 0, "right": 0, "bottom": 0.5, "left": 0 }` for a hairline under a navigation bar —
+`border-bottom: 0.5px solid` — and is then what Figma draws, whatever `strokeWeight` says.
+
 ### 7. `fig_components` — the component catalogue
 
 SYMBOL nodes with their component set, property definitions and defaults, and instance counts —

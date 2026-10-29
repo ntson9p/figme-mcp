@@ -296,6 +296,16 @@ the iOS 16 UI Kit). Of the nodes with `rectangleCornerRadiiIndependent`, 162 cor
 rounded all four. The renderer reads these fields only for a shape it rebuilds from size and
 radii (§4.14, F20); the inspection tools report them for every node.
 
+**F25 — Independent stroke sides are drawn at their own weights** (measured 2026-10-30 on the
+iOS 16 UI Kit). With `borderStrokeWeightsIndependent`, `border{Top,Right,Bottom,Left}Weight` set
+each side and `strokeWeight` describes none of them: 251 of the file's 619 stroked nodes have
+differing sides, such as the 0.5 px hairline under every navigation bar (`bottom: 0.5`, with a
+`strokeWeight` of 0) and over every tab bar (`top: 0.5`, with 1). For the 245 nodes with exactly
+one side set, `strokeGeometry` lies along that edge alone. The exporter draws `strokeGeometry`
+and needs none of this; the inspection tools report the sides as `strokeWeights`. Conversely,
+`strokeWeight` is written on nearly every node — 5 842 of this file's nodes have one and no
+stroke at all — so it is reported only beside a stroke that shows.
+
 **F15 — Existing APIs to reuse** (do not duplicate): `FileCache.get(file): CacheEntry
 { fig, index }`, `FileIndex.node(guid)`, `FileIndex.subtreeRange(root)`, `TreeNode
 { key, node, children, parent }`, accessors `str/num/bool/obj/arr/objArr/bytes/hex` in

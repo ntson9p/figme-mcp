@@ -442,7 +442,16 @@ With `rectangleCornerRadiiIndependent: true`, Figma writes only the corners that
 each of the 162 missing `rectangle…CornerRadius` fields in the file is a square corner in the
 node's `fillGeometry`, 38 of them on nodes whose `cornerRadius` is non-zero.
 
-### 9.4 `4294967295:4294967295` is "no guid", in `overrideKey` too
+### 9.4 Stroke sides can each have their own weight
+
+`borderStrokeWeightsIndependent: true` with `borderTopWeight`, `borderRightWeight`,
+`borderBottomWeight` and `borderLeftWeight` (a missing side is 0) gives each side its own weight,
+and `strokeWeight` is then not the weight of any side: the navigation bar's bottom hairline is
+`borderBottomWeight: 0.5` beside `strokeWeight: 0`. 251 of the 619 nodes with a visible stroke
+are like this; on the 245 with a single side set, the outlined `strokeGeometry` lies along that
+edge only. `strokeWeight` itself is present on nearly every node, stroked or not.
+
+### 9.5 `4294967295:4294967295` is "no guid", in `overrideKey` too
 
 The detached-style sentinel of §8.7 also appears as an `overrideKey`: 30 of the 44 layers that
 carry one carry this value. No record path segment ever equals it; 31 segments address those

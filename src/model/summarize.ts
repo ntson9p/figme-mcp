@@ -121,6 +121,26 @@ function cornerRadiusOf(node: NodeChange): unknown {
   return corners.every((v) => v === corners[0]) ? corners[0] : corners;
 }
 
+/** Does any stroke paint show? A weight, alignment, cap or dash describes nothing without one. */
+function hasVisibleStroke(live: NodeChange): boolean {
+  return objArr(live, 'strokePaints').some((p) => bool(p, 'visible') !== false);
+}
+
+/**
+ * Per-side stroke weights, when the sides are set independently (F25): Figma then draws each side
+ * at its own weight, whatever the node's `strokeWeight` says — the hairline under a navigation
+ * bar is `bottom: 0.5` beside a `strokeWeight` of 0, the one over a tab bar `top: 0.5` beside 1.
+ */
+function sideWeights(node: NodeChange): Record<string, number> | undefined {
+  if (bool(node, 'borderStrokeWeightsIndependent') !== true) return undefined;
+  return {
+    top: r2(num(node, 'borderTopWeight') ?? 0)!,
+    right: r2(num(node, 'borderRightWeight') ?? 0)!,
+    bottom: r2(num(node, 'borderBottomWeight') ?? 0)!,
+    left: r2(num(node, 'borderLeftWeight') ?? 0)!,
+  };
+}
+
 // --------------------------------------------------------------------------- paints & effects
 
 export function paintView(idx: FileIndex, p: KiwiObject): Record<string, unknown> {
@@ -537,6 +557,7 @@ export function nodeDetail(
   const effects = objArr(live, 'effects').map((e) => effectView(idx, e));
   const images = nodeImageHashes(live);
   const dashPattern = node['dashPattern'];
+  const stroked = hasVisibleStroke(live);
 
   return compact({
     guid: t.key,
@@ -565,11 +586,12 @@ export function nodeDetail(
 
     fills: fills.length ? fills : undefined,
     strokes: strokes.length ? strokes : undefined,
-    strokeWeight: num(node, 'strokeWeight') ? r2(num(node, 'strokeWeight')) : undefined,
-    strokeAlign: strokes.length ? str(node, 'strokeAlign') : undefined,
-    strokeCap: str(node, 'strokeCap'),
-    strokeJoin: strokes.length ? str(node, 'strokeJoin') : undefined,
-    dashPattern: Array.isArray(dashPattern) && dashPattern.length
+    strokeWeight: stroked && num(node, 'strokeWeight') ? r2(num(node, 'strokeWeight')) : undefined,
+    strokeWeights: stroked ? sideWeights(node) : undefined,
+    strokeAlign: stroked ? str(node, 'strokeAlign') : undefined,
+    strokeCap: stroked ? str(node, 'strokeCap') : undefined,
+    strokeJoin: stroked ? str(node, 'strokeJoin') : undefined,
+    dashPattern: stroked && Array.isArray(dashPattern) && dashPattern.length
       ? (dashPattern as number[]).map((v) => r2(v))
       : undefined,
     effects: effects.length ? effects : undefined,
@@ -718,6 +740,7 @@ export function styleBlock(idx: FileIndex, t: TreeNode): Record<string, unknown>
   const effects = objArr(live, 'effects').map((e) => effectView(idx, e));
   const type = str(node, 'type');
   const dashPattern = node['dashPattern'];
+  const stroked = hasVisibleStroke(live);
 
   return compact({
     guid: t.key,
@@ -730,9 +753,10 @@ export function styleBlock(idx: FileIndex, t: TreeNode): Record<string, unknown>
     cornerRadius: cornerRadiusOf(node),
     fills: fills.length ? fills : undefined,
     strokes: strokes.length ? strokes : undefined,
-    strokeWeight: num(node, 'strokeWeight') ? r2(num(node, 'strokeWeight')) : undefined,
-    strokeAlign: strokes.length ? str(node, 'strokeAlign') : undefined,
-    dashPattern: Array.isArray(dashPattern) && dashPattern.length
+    strokeWeight: stroked && num(node, 'strokeWeight') ? r2(num(node, 'strokeWeight')) : undefined,
+    strokeWeights: stroked ? sideWeights(node) : undefined,
+    strokeAlign: stroked ? str(node, 'strokeAlign') : undefined,
+    dashPattern: stroked && Array.isArray(dashPattern) && dashPattern.length
       ? (dashPattern as number[]).map((v) => r2(v))
       : undefined,
     effects: effects.length ? effects : undefined,

@@ -311,3 +311,26 @@ describe('iOS 16 UI Kit — typography as Figma lays it out', { skip }, () => {
     );
   });
 });
+
+describe('iOS 16 UI Kit — strokes', { skip }, () => {
+  it('only a node with a visible stroke reports a stroke weight', () => {
+    // Figma writes strokeWeight 1 on almost every node: 5 842 of them here have no stroke at all.
+    const wrong: string[] = [];
+    let stroked = 0;
+    for (const t of index.tree.ordered) {
+      const style = styleBlock(index, t);
+      const shows = ((style['strokes'] as { visible?: boolean }[] | undefined) ?? []).some((p) => p.visible !== false);
+      if (shows) stroked++;
+      if (!shows && (style['strokeWeight'] !== undefined || style['strokeWeights'] !== undefined)) wrong.push(t.key);
+    }
+    assert.ok(stroked > 500, `${stroked} stroked nodes`);
+    assert.deepEqual(wrong.slice(0, 5), []);
+  });
+
+  it('a hairline on one side reports that side alone', async () => {
+    const nav = await harness.call('fig_style', { file, guid: '1340:17036' });
+    assert.deepEqual((nav.json['style'] as Record<string, any>)['strokeWeights'], { top: 0, right: 0, bottom: 0.5, left: 0 });
+    const tabs = await harness.call('fig_node', { file, guid: '1340:17061', includeChildren: false });
+    assert.deepEqual((tabs.json['node'] as Record<string, any>)['strokeWeights'], { top: 0.5, right: 0, bottom: 0, left: 0 });
+  });
+});
