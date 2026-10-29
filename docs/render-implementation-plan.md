@@ -288,6 +288,14 @@ one. Taken literally, every such layer of a component shared one identity, so a 
 for one of them reached none, and `fig_instance` could not name its target. `overrideIdentity`
 falls back to the guid for it, as for a layer with no key.
 
+**F24 — With independent corner radii, an unwritten corner is square** (measured 2026-10-30 on
+the iOS 16 UI Kit). Of the nodes with `rectangleCornerRadiiIndependent`, 162 corners have no
+`rectangle…CornerRadius` field, and every one of them is square in the node's own `fillGeometry`
+— 38 of them beside a non-zero `cornerRadius`, such as a notification rounded only at the top
+(`23, 23, 0, 0`) or an action-sheet button rounded at one end. Falling back to `cornerRadius`
+rounded all four. The renderer reads these fields only for a shape it rebuilds from size and
+radii (§4.14, F20); the inspection tools report them for every node.
+
 **F15 — Existing APIs to reuse** (do not duplicate): `FileCache.get(file): CacheEntry
 { fig, index }`, `FileIndex.node(guid)`, `FileIndex.subtreeRange(root)`, `TreeNode
 { key, node, children, parent }`, accessors `str/num/bool/obj/arr/objArr/bytes/hex` in
