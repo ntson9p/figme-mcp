@@ -1,9 +1,10 @@
 /** `fig_instance` — what one INSTANCE changes relative to its component. */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { fileArg, handler, load, requireNode, type ToolContext } from './context.js';
+import { fileArg, handler, load, requireScene, type ToolContext } from './context.js';
 import { jsonResult } from '../respond.js';
 import { instanceView } from '../../model/components.js';
+import { inheritedOverrides } from '../../model/scene.js';
 import { str } from '../../model/access.js';
 
 export const NAME = 'fig_instance';
@@ -13,6 +14,8 @@ export const DESCRIPTION = [
   'assignments with the property names resolved, and every override it applies — each with the',
   'path down into the component, the node that path addresses, and the fields it changes.',
   'Use it to see how an instance differs from its component without diffing two subtrees.',
+  'An instance nested inside another (an id like "I2:1329;0:2528") also lists, as inherited,',
+  'the overrides the enclosing instance applies inside it.',
 ].join(' ');
 
 const MAX_OVERRIDES = 60;
@@ -31,7 +34,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
     handler((args: { file: string; guid: string }) => {
       const { index } = load(ctx, args.file);
-      const t = requireNode(index, args.guid);
+      const t = requireScene(index, args.guid);
       const type = str(t.node, 'type');
       if (type !== 'INSTANCE') {
         throw new Error(
@@ -39,7 +42,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
             'use fig_node for other node types, or fig_components to list SYMBOLs',
         );
       }
-      const { overrides = [], ...instance } = instanceView(index, t);
+      const { overrides = [], ...instance } = instanceView(index, t, inheritedOverrides(t));
       const truncated = overrides.length > MAX_OVERRIDES;
       return jsonResult(
         {

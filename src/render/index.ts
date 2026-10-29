@@ -7,6 +7,7 @@
  */
 import type { CacheEntry } from '../cache.js';
 import { canonicalGuid, guidNotFound, type TreeNode } from '../model/tree.js';
+import { isSublayerId, resolveScene, type SceneNode } from '../model/scene.js';
 import { str } from '../model/access.js';
 import { pageBackground } from './color.js';
 import {
@@ -14,6 +15,7 @@ import {
   HARD_MAX_NODES,
   MAX_SVG_BYTES,
   exportSubtree,
+  type ExportContext,
   type NodeBox,
 } from './export.js';
 import type { Box } from './matrix.js';
@@ -49,14 +51,38 @@ export interface RenderResult {
   readonly rasterizerMissing: boolean;
 }
 
-function resolveRoot(entry: CacheEntry, guid: string): TreeNode {
+interface RenderRoot {
+  /** The stored node the traversal starts from. */
+  readonly root: TreeNode;
+  /** For a layer inside an instance: that layer as the instance shows it. */
+  readonly scene?: SceneNode;
+  readonly context?: ExportContext;
+}
+
+function resolveRoot(entry: CacheEntry, guid: string): RenderRoot {
   const key = canonicalGuid(guid);
+  if (isSublayerId(key)) {
+    // A layer inside an instance: draw its component layer inside that instance's expansion.
+    const scene = resolveScene(entry.index, key);
+    if (!scene) throw new Error(guidNotFound(guid, key));
+    const level = scene.level;
+    return {
+      root: scene.source,
+      scene,
+      context: level && {
+        records: level.instance.records,
+        props: level.instance.props,
+        scope: `${[level.root, ...level.path].join('~')}~`,
+        active: level.active,
+      },
+    };
+  }
   const t = entry.index.node(key);
   if (!t) throw new Error(guidNotFound(guid, key));
   if (nodeType(t.node) === 'DOCUMENT') {
     throw new Error('cannot render the DOCUMENT node — render a page or a node inside one');
   }
-  return t;
+  return { root: t };
 }
 
 export async function renderNode(
@@ -64,7 +90,7 @@ export async function renderNode(
   guid: string,
   opts: RenderOptions = {},
 ): Promise<RenderResult> {
-  const root = resolveRoot(entry, guid);
+  const { root, scene, context } = resolveRoot(entry, guid);
 
   const maxNodes = Math.min(opts.maxNodes ?? DEFAULT_MAX_NODES, HARD_MAX_NODES);
   const range = entry.index.subtreeRange(root);
@@ -76,13 +102,15 @@ export async function renderNode(
     );
   }
 
-  const background = opts.background === 'page' ? pageBackground(root) : undefined;
+  // A layer of an instance sits on the instance's page, not on its component's.
+  const background = opts.background === 'page' ? pageBackground(scene ?? root) : undefined;
 
   const startedExport = performance.now();
   const exported = exportSubtree(entry, root, {
     maxNodes,
     collectBoxes: opts.collectBoxes,
     background,
+    context,
   });
   const renderMs = performance.now() - startedExport;
 
@@ -123,8 +151,9 @@ export async function renderNode(
     }
   }
 
+  const shown = scene ?? root;
   const report = exported.report.finish({
-    root: { guid: root.key, name: str(root.node, 'name'), type: nodeType(root.node) },
+    root: { guid: shown.key, name: str(shown.node, 'name'), type: nodeType(shown.node) },
     bounds,
     width,
     height,

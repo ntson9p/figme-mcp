@@ -14,8 +14,11 @@ import type { FileIndex } from './index.js';
 import { guidKey, breadcrumb, type Guid, type TreeNode } from './tree.js';
 import { resolveOverridePath } from './instance.js';
 import { bool, colorHex, compact, jsonSafe, num, obj, objArr, r2, str } from './access.js';
-import { effectView, paintView, textBasics } from './summarize.js';
+import {
+  cornerRadiusOf, effectView, paintBox, paintView, sideWeights, styleRefsOf, textBasics,
+} from './summarize.js';
 import { describeVariableData } from './variables.js';
+import { applyStyles } from './styles.js';
 
 /** Fields present on every override/derived record that are addressing, not content. */
 const OVERRIDE_META = new Set(['guidPath', 'overrideLevel', 'guid', 'phase', 'parentIndex']);
@@ -52,6 +55,21 @@ function componentPropValue(idx: FileIndex, value: KiwiObject | undefined): unkn
   if (color) return colorHex(color);
   const keys = Object.keys(value);
   return keys.length ? { [keys[0]!]: jsonSafe(value[keys[0]!]) } : undefined;
+}
+
+/** Component-property assignments with the property names resolved. */
+function propAssignmentViews(idx: FileIndex, assignments: readonly KiwiObject[]): Record<string, unknown>[] {
+  return assignments.map((a) => {
+    const defID = guidKey(obj(a, 'defID') as Guid | undefined) ?? '?';
+    const def = idx.propDefs().get(defID);
+    const value = componentPropValue(idx, obj(a, 'value'));
+    return compact({
+      defID,
+      name: def?.name,
+      type: def?.type,
+      value: value ?? describeVariableData(idx, obj(a, 'varValue')),
+    });
+  });
 }
 
 export function componentView(idx: FileIndex, t: TreeNode): ComponentView {
@@ -98,6 +116,8 @@ export interface OverrideView {
   fields: Record<string, unknown>;
   /** Field names present in the record that this mapper did not translate. */
   otherFields?: string[];
+  /** Applied by an enclosing instance to this nested one, rather than by this instance. */
+  inherited?: boolean;
 }
 
 /** Map one partial NodeChange (an override or a derived record) to a compact field set. */
@@ -105,35 +125,58 @@ export function overrideFields(idx: FileIndex, partial: NodeChange): {
   fields: Record<string, unknown>;
   otherFields: string[];
 } {
+  // A record that names a style shows the style's live value, not the copy cached beside the
+  // reference — or the nothing there when the record carries only the reference (F19, F22).
+  const live = applyStyles(idx, partial, { text: true, partial: true });
   const size = obj(partial, 'size');
   const transform = obj(partial, 'transform');
-  const fills = objArr(partial, 'fillPaints');
-  const strokes = objArr(partial, 'strokePaints');
-  const effects = objArr(partial, 'effects');
+  const fills = objArr(live, 'fillPaints');
+  const strokes = objArr(live, 'strokePaints');
+  const effects = objArr(live, 'effects');
   const w = num(size, 'x');
   const h = num(size, 'y');
+  const swap = guidKey(obj(partial, 'overriddenSymbolID') as Guid | undefined);
+  const assignments = objArr(partial, 'componentPropAssignments');
 
   const fields = compact({
+    name: str(partial, 'name'),
     size: w !== undefined && h !== undefined ? `${r2(w)}x${r2(h)}` : undefined,
     x: r2(num(transform, 'm02')),
     y: r2(num(transform, 'm12')),
     visible: bool(partial, 'visible'),
     opacity: r2(num(partial, 'opacity')),
     // An empty fills array is itself an override ("remove all fills"), so report the count.
-    fills: 'fillPaints' in partial ? fills.map((p) => paintView(idx, p)) : undefined,
-    fillsCleared: 'fillPaints' in partial && fills.length === 0 ? true : undefined,
-    strokes: 'strokePaints' in partial ? strokes.map((p) => paintView(idx, p)) : undefined,
-    strokesCleared: 'strokePaints' in partial && strokes.length === 0 ? true : undefined,
+    fills: 'fillPaints' in live ? fills.map((p) => paintView(idx, p, paintBox(partial))) : undefined,
+    fillsCleared: 'fillPaints' in live && fills.length === 0 ? true : undefined,
+    strokes: 'strokePaints' in live ? strokes.map((p) => paintView(idx, p, paintBox(partial))) : undefined,
+    strokesCleared: 'strokePaints' in live && strokes.length === 0 ? true : undefined,
+    // A record writes the stroke-side and corner groups whole, so they read like a node's.
+    strokeWeight: r2(num(partial, 'strokeWeight')),
+    strokeWeights: sideWeights(partial),
     effects: effects.length ? effects.map((e) => effectView(idx, e)) : undefined,
-    text: textBasics(partial),
-    cornerRadius: r2(num(partial, 'cornerRadius')),
+    text: textBasics(live),
+    cornerRadius: 'rectangleCornerRadiiIndependent' in partial
+      ? cornerRadiusOf(partial)
+      : r2(num(partial, 'cornerRadius')),
     symbolID: guidKey(obj(obj(partial, 'symbolData'), 'symbolID') as Guid | undefined),
+    // A nested instance swapped for another component, or given other property values.
+    swappedTo: swap ? compact({ guid: swap, name: str(idx.node(swap)?.node, 'name') }) : undefined,
+    propAssignments: assignments.length ? propAssignmentViews(idx, assignments) : undefined,
+    styles: styleRefsOf(idx, partial),
   });
 
   const known = new Set([
-    'size', 'transform', 'visible', 'opacity', 'fillPaints', 'strokePaints', 'effects',
-    'textData', 'fontName', 'fontSize', 'lineHeight', 'letterSpacing', 'cornerRadius',
-    'symbolData',
+    'name', 'size', 'transform', 'visible', 'opacity', 'fillPaints', 'strokePaints', 'effects',
+    'strokeWeight', 'borderStrokeWeightsIndependent', 'borderTopWeight', 'borderRightWeight',
+    'borderBottomWeight', 'borderLeftWeight',
+    'textData', 'fontName', 'fontSize', 'lineHeight', 'letterSpacing', 'paragraphSpacing',
+    'textAlignHorizontal', 'textAlignVertical', 'textCase', 'textDecoration', 'textAutoResize',
+    'cornerRadius', 'rectangleCornerRadiiIndependent', 'rectangleTopLeftCornerRadius',
+    'rectangleTopRightCornerRadius', 'rectangleBottomRightCornerRadius',
+    'rectangleBottomLeftCornerRadius',
+    'symbolData', 'overriddenSymbolID', 'componentPropAssignments',
+    'styleIdForFill', 'styleIdForStrokeFill', 'styleIdForText', 'styleIdForEffect',
+    'styleIdForGrid',
   ]);
   const otherFields = Object.keys(partial).filter((k) => !known.has(k) && !OVERRIDE_META.has(k));
   return { fields, otherFields };
@@ -141,8 +184,15 @@ export function overrideFields(idx: FileIndex, partial: NodeChange): {
 
 export function instanceOverrides(idx: FileIndex, t: TreeNode, field: string): OverrideView[] {
   const symbolData = field === 'symbolOverrides' ? obj(t.node, 'symbolData') : t.node;
-  const records = objArr(symbolData, field);
+  return overrideViews(idx, t, objArr(symbolData, field));
+}
 
+function overrideViews(
+  idx: FileIndex,
+  t: TreeNode,
+  records: readonly KiwiObject[],
+  inherited = false,
+): OverrideView[] {
   return records.map((record) => {
     const path = objArr(obj(record, 'guidPath'), 'guids')
       .map((g) => guidKey(g as Guid))
@@ -161,6 +211,7 @@ export function instanceOverrides(idx: FileIndex, t: TreeNode, field: string): O
       targetType: target ? str(target.node, 'type') : undefined,
       fields,
       otherFields: otherFields.length ? otherFields : undefined,
+      inherited: inherited || undefined,
     }) as OverrideView;
   });
 }
@@ -177,23 +228,24 @@ export interface InstanceView {
   scaleFactor?: number;
 }
 
-export function instanceView(idx: FileIndex, t: TreeNode): InstanceView {
+/**
+ * `inherited` are the records enclosing instances apply inside this one when it is itself a
+ * layer of an instance (model/scene.ts `inheritedOverrides`), already re-addressed from it.
+ */
+export function instanceView(
+  idx: FileIndex,
+  t: TreeNode,
+  inherited: readonly KiwiObject[] = [],
+): InstanceView {
   const symbolData = obj(t.node, 'symbolData');
-  const symbolId = guidKey(obj(symbolData, 'symbolID') as Guid | undefined);
+  // A layer inside an instance may have had its symbol swapped by a record or a property.
+  const symbolId =
+    guidKey(obj(t.node, 'overriddenSymbolID') as Guid | undefined) ??
+    guidKey(obj(symbolData, 'symbolID') as Guid | undefined);
   const symbol = symbolId ? idx.node(symbolId) : undefined;
   const symbolParent = symbol?.parent;
 
-  const assignments = objArr(t.node, 'componentPropAssignments').map((a) => {
-    const defID = guidKey(obj(a, 'defID') as Guid | undefined) ?? '?';
-    const def = idx.propDefs().get(defID);
-    const value = componentPropValue(idx, obj(a, 'value'));
-    return compact({
-      defID,
-      name: def?.name,
-      type: def?.type,
-      value: value ?? describeVariableData(idx, obj(a, 'varValue')),
-    });
-  });
+  const assignments = propAssignmentViews(idx, objArr(t.node, 'componentPropAssignments'));
 
   return compact({
     guid: t.key,
@@ -213,7 +265,10 @@ export function instanceView(idx: FileIndex, t: TreeNode): InstanceView {
         })
       : undefined,
     propAssignments: assignments.length ? assignments : undefined,
-    overrides: instanceOverrides(idx, t, 'symbolOverrides'),
+    overrides: [
+      ...instanceOverrides(idx, t, 'symbolOverrides'),
+      ...overrideViews(idx, t, inherited, true),
+    ],
     derivedRecords: objArr(t.node, 'derivedSymbolData').length || undefined,
     scaleFactor: num(symbolData, 'uniformScaleFactor') === 1 ? undefined : num(symbolData, 'uniformScaleFactor'),
   }) as InstanceView;

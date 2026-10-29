@@ -407,3 +407,54 @@ no `firstCharacter` — is the ellipsis Figma inserted (920 of 920 truncated tex
 run (12 576 of 12 576 such glyphs); the run of a glyph is `textData.characterStyleIDs[
 firstCharacter]`, one entry per character with an implicit 0 past the end of the array (413
 texts store a full array, 101 a shorter one, none a longer one).
+
+## 9. Addendum — measured on the iOS 16 UI Kit community file (2026-10-30)
+
+A second, public design (Figma Community, 8 267 nodes, `fig-kiwi` version 106) used to check the
+inspection tools against Figma's own layout data.
+
+### 9.1 A text style reference is live; the typography cached beside it is not
+
+§8.7 holds for `styleIdForText` too. 75 of the 1 474 text nodes that reference a local text
+style cache a `fontName`, `fontSize`, `lineHeight` or `letterSpacing` that disagrees with it, and
+in every case `derivedTextData` — the layout Figma computed — follows the style: 39 of 39 glyph
+font sizes, 22 of 22 font families and 26 of 26 weights (`fontMetaData`). Example: the DatePicker
+header `55:4649` caches SF Pro Display Semibold 20 px, line height 24 px, letter spacing +0.38 px;
+its glyphs are 17 px SF Pro Text Semibold at a −0.408 px advance and its baseline is 22 px —
+exactly its "Body/Bold" style. Every text style node in the file carries `fontName`, `fontSize`,
+`lineHeight` and `letterSpacing`; `textCase`, `textDecoration` and paragraph spacing are written
+only when not the default. The same file also confirms §8.7 at scale: 765 stored nodes cache a
+fill that disagrees with their colour style, 50 a stroke and 8 an effect, and the styles there
+are referenced by `guid` (they were never published), not by `assetRef`.
+
+### 9.2 "Auto" line height is `{ value: 100, units: "PERCENT" }`
+
+All 56 text nodes whose live line height is 100 PERCENT are laid out — `derivedTextData.
+baselines[].lineHeight` — at their font's natural line height (`fontMetaData[].fontLineHeight`
+× size, rounded up to a whole pixel by newer text layout versions): 119.34 px for 100 px SF Pro,
+not 100 px. It is Figma's "Auto" (the REST API's `INTRINSIC_%`), CSS `line-height: normal`, and
+not a CSS `100%`. No other PERCENT line height occurs in the file. A PERCENT letter spacing is a
+percentage of the font size, CSS `em`.
+
+### 9.3 An independent corner radius that is not written is 0
+
+With `rectangleCornerRadiiIndependent: true`, Figma writes only the corners that are rounded:
+each of the 162 missing `rectangle…CornerRadius` fields in the file is a square corner in the
+node's `fillGeometry`, 38 of them on nodes whose `cornerRadius` is non-zero.
+
+### 9.4 Stroke sides can each have their own weight
+
+`borderStrokeWeightsIndependent: true` with `borderTopWeight`, `borderRightWeight`,
+`borderBottomWeight` and `borderLeftWeight` (a missing side is 0) gives each side its own weight,
+and `strokeWeight` is then not the weight of any side: the navigation bar's bottom hairline is
+`borderBottomWeight: 0.5` beside `strokeWeight: 0`. 251 of the 619 nodes with a visible stroke
+are like this; on the 245 with a single side set, the outlined `strokeGeometry` lies along that
+edge only. `strokeWeight` itself is present on nearly every node, stroked or not.
+
+### 9.5 `4294967295:4294967295` is "no guid", in `overrideKey` too
+
+The detached-style sentinel of §8.7 also appears as an `overrideKey`: 30 of the 44 layers that
+carry one carry this value. No record path segment ever equals it; 31 segments address those
+layers by their guid. It therefore means "no key", and the layer's identity is its guid — read
+literally, all such layers of a component would share one identity and none of their records
+would apply.

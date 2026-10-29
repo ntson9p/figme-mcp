@@ -16,6 +16,7 @@ import {
   assetRefString, bool, bytes, colorHex, compact, hex, jsonSafe, num, obj, objArr, r2, str,
 } from './access.js';
 import { describeVariableData } from './variables.js';
+import { applyStyles, DETACHED_STYLE_GUID, resolveStyle } from './styles.js';
 
 export interface NodeSummary {
   guid: string;
@@ -24,6 +25,8 @@ export interface NodeSummary {
   /** `"134x40"` — denser than `{x,y}` and still trivially parseable. */
   size?: string;
   children?: number;
+  /** The layer itself is hidden — set directly, or by a component property. */
+  hidden?: boolean;
   page?: string;
 }
 
@@ -37,6 +40,7 @@ export function summarize(t: TreeNode, opts: { page?: boolean } = {}): NodeSumma
     name: str(t.node, 'name'),
     size: w !== undefined && h !== undefined ? `${r2(w)}x${r2(h)}` : undefined,
     children: t.children.length || undefined,
+    hidden: bool(t.node, 'visible') === false || undefined,
     page: opts.page && t.page ? str(t.page.node, 'name') : undefined,
   }) as NodeSummary;
 }
@@ -49,6 +53,7 @@ export function outlineLine(t: TreeNode, depth: number): string {
   parts.push(JSON.stringify(s.name ?? ''));
   parts.push(`(${s.guid})`);
   if (s.children) parts.push(`x${s.children}`);
+  if (s.hidden) parts.push('hidden');
   return parts.join(' ');
 }
 
@@ -98,21 +103,143 @@ function geometryOf(t: TreeNode): Record<string, unknown> | undefined {
   return Object.keys(g).length ? g : undefined;
 }
 
-function cornerRadiusOf(node: NodeChange): unknown {
+/**
+ * One radius, or four in CSS order (top-left, top-right, bottom-right, bottom-left). With
+ * independent corners, a corner the record does not write is square, whatever `cornerRadius`
+ * says (F24): on the iOS 16 UI Kit every one of the 162 such corners is square in Figma's own
+ * outline, 38 of them beside a non-zero `cornerRadius` — a notification rounded only at the top.
+ */
+export function cornerRadiusOf(node: NodeChange): unknown {
   const uniform = num(node, 'cornerRadius');
   if (!bool(node, 'rectangleCornerRadiiIndependent')) return r2(uniform);
   const corners = [
-    num(node, 'rectangleTopLeftCornerRadius') ?? uniform ?? 0,
-    num(node, 'rectangleTopRightCornerRadius') ?? uniform ?? 0,
-    num(node, 'rectangleBottomRightCornerRadius') ?? uniform ?? 0,
-    num(node, 'rectangleBottomLeftCornerRadius') ?? uniform ?? 0,
+    num(node, 'rectangleTopLeftCornerRadius') ?? 0,
+    num(node, 'rectangleTopRightCornerRadius') ?? 0,
+    num(node, 'rectangleBottomRightCornerRadius') ?? 0,
+    num(node, 'rectangleBottomLeftCornerRadius') ?? 0,
   ].map((v) => r2(v)!);
   return corners.every((v) => v === corners[0]) ? corners[0] : corners;
 }
 
+/** Does any stroke paint show? A weight, alignment, cap or dash describes nothing without one. */
+function hasVisibleStroke(live: NodeChange): boolean {
+  return objArr(live, 'strokePaints').some((p) => bool(p, 'visible') !== false);
+}
+
+/**
+ * Per-side stroke weights, when the sides are set independently (F25): Figma then draws each side
+ * at its own weight, whatever the node's `strokeWeight` says — the hairline under a navigation
+ * bar is `bottom: 0.5` beside a `strokeWeight` of 0, the one over a tab bar `top: 0.5` beside 1.
+ */
+export function sideWeights(node: NodeChange): Record<string, number> | undefined {
+  if (bool(node, 'borderStrokeWeightsIndependent') !== true) return undefined;
+  return {
+    top: r2(num(node, 'borderTopWeight') ?? 0)!,
+    right: r2(num(node, 'borderRightWeight') ?? 0)!,
+    bottom: r2(num(node, 'borderBottomWeight') ?? 0)!,
+    left: r2(num(node, 'borderLeftWeight') ?? 0)!,
+  };
+}
+
 // --------------------------------------------------------------------------- paints & effects
 
-export function paintView(idx: FileIndex, p: KiwiObject): Record<string, unknown> {
+/** The size of the box a paint fills, which a gradient's direction is relative to. */
+export interface PaintBox {
+  readonly w: number;
+  readonly h: number;
+}
+
+/** The node's own box, for `paintView`. */
+export function paintBox(node: NodeChange): PaintBox | undefined {
+  const size = obj(node, 'size');
+  const w = num(size, 'x');
+  const h = num(size, 'y');
+  return w !== undefined && h !== undefined && w > 0 && h > 0 ? { w, h } : undefined;
+}
+
+interface GradientStop {
+  readonly at: number;
+  readonly r: number;
+  readonly g: number;
+  readonly b: number;
+  readonly a: number;
+}
+
+/** Steps a stretch between two stops is cut into when CSS would blend it differently. */
+const BLEND_STEPS = 8;
+
+/**
+ * Figma blends gradient colours unpremultiplied, CSS premultiplied: across a stretch where both
+ * the colour and the alpha change — transparent white into 50 % black — CSS loses the pale
+ * fringe Figma draws. Sampling such a stretch as Figma blends it keeps the two within a level or
+ * two; a stretch where only one of them changes blends the same either way and is left alone.
+ */
+function blendLikeFigma(stops: readonly GradientStop[]): GradientStop[] {
+  const out: GradientStop[] = [];
+  stops.forEach((s, i) => {
+    const prev = stops[i - 1];
+    if (prev && prev.a !== s.a && (prev.r !== s.r || prev.g !== s.g || prev.b !== s.b)) {
+      for (let k = 1; k < BLEND_STEPS; k++) {
+        const t = k / BLEND_STEPS;
+        const mix = (x: number, y: number): number => x + (y - x) * t;
+        out.push({
+          at: mix(prev.at, s.at), r: mix(prev.r, s.r), g: mix(prev.g, s.g), b: mix(prev.b, s.b), a: mix(prev.a, s.a),
+        });
+      }
+    }
+    out.push(s);
+  });
+  return out;
+}
+
+/**
+ * A linear gradient as CSS, for the box it fills. `transform` maps the normalized box to
+ * gradient space, where the gradient runs along x from 0 to 1 (F7), so its value at a pixel is
+ * `m00·x/w + m01·y/h + m02`: it grows along `(m00/w, m01/h)` — CSS's angle — and each stop goes
+ * where CSS's gradient line (through the centre, `|w·sin θ| + |h·cos θ|` long) reaches that
+ * value. Exact for any transform; stops take the paint's opacity into their alpha. Drawn by a
+ * browser, it matches `fig_render` to a mean of under one level per channel.
+ */
+function linearGradientCss(p: KiwiObject, box: PaintBox): string | undefined {
+  const m = obj(p, 'transform');
+  const a = num(m, 'm00') ?? 1;
+  const b = num(m, 'm01') ?? 0;
+  const c = num(m, 'm02') ?? 0;
+  const nx = a / box.w;
+  const ny = b / box.h;
+  const rate = Math.hypot(nx, ny);
+  if (!(rate > 1e-9)) return undefined;
+  const theta = Math.atan2(nx, -ny);
+  const line = Math.abs(box.w * Math.sin(theta)) + Math.abs(box.h * Math.cos(theta));
+  const atCentre = a / 2 + b / 2 + c;
+  const opacity = num(p, 'opacity') ?? 1;
+  const stops: GradientStop[] = objArr(p, 'stops')
+    .map((s) => {
+      const color = obj(s, 'color');
+      return {
+        at: Math.max(0, Math.min(1, num(s, 'position') ?? 0)),
+        r: num(color, 'r') ?? 0,
+        g: num(color, 'g') ?? 0,
+        b: num(color, 'b') ?? 0,
+        a: (num(color, 'a') ?? 1) * opacity,
+      };
+    })
+    .sort((x, y) => x.at - y.at);
+  if (stops.length === 0) return undefined;
+  const css = blendLikeFigma(stops).map(
+    (s) =>
+      `${colorHex({ r: s.r, g: s.g, b: s.b, a: s.a })} ` +
+      `${r2(((s.at - atCentre) / (rate * line) + 0.5) * 100)}%`,
+  );
+  const degrees = (((theta * 180) / Math.PI) % 360 + 360) % 360;
+  return `linear-gradient(${r2(degrees)}deg, ${css.join(', ')})`;
+}
+
+/**
+ * One paint. Given the box it fills, a linear gradient also comes back as `css` — its direction
+ * is otherwise nowhere in the output.
+ */
+export function paintView(idx: FileIndex, p: KiwiObject, box?: PaintBox): Record<string, unknown> {
   const image = obj(p, 'image');
   const stops = objArr(p, 'stops').map((s) =>
     compact({ at: r2(num(s, 'position')), color: colorHex(obj(s, 'color')) }),
@@ -126,6 +253,7 @@ export function paintView(idx: FileIndex, p: KiwiObject): Record<string, unknown
     visible: bool(p, 'visible') === false ? false : undefined,
     blendMode: str(p, 'blendMode') === 'NORMAL' ? undefined : str(p, 'blendMode'),
     stops: stops.length ? stops : undefined,
+    css: box && str(p, 'type') === 'GRADIENT_LINEAR' ? linearGradientCss(p, box) : undefined,
     imageHash: hex(bytes(image, 'hash')),
     imageName: str(image, 'name'),
     imageScaleMode: str(p, 'imageScaleMode'),
@@ -183,15 +311,63 @@ export function paddingOf(node: NodeChange): Padding | undefined {
   };
 }
 
+/**
+ * Figma's "Auto" spacing: the gap is whatever spreads the children across the box, and the stored
+ * `stackSpacing` is ignored. Kiwi writes it as SPACE_EVENLY; the plugin and REST APIs call it
+ * SPACE_BETWEEN, and so does newer kiwi. Measured on the iOS 16 UI Kit: all 93 SPACE_EVENLY frames
+ * with two or more in-flow children sit flush against both paddings with equal gaps — CSS
+ * `justify-content: space-between` — and in 88 of them that gap is not the stored `stackSpacing`.
+ */
+const AUTO_SPACING = new Set(['SPACE_EVENLY', 'SPACE_BETWEEN']);
+
+const HUG = new Set(['RESIZE_TO_FIT', 'RESIZE_TO_FIT_WITH_IMPLICIT_SIZE']);
+
+interface FlowSpacing {
+  /** The gap between children; undefined when Figma computes it (auto spacing). */
+  readonly primary?: number;
+  /** The gap between wrapped lines; undefined unless the layout wraps with a fixed gap. */
+  readonly counter?: number;
+  /** The children are spread across the box (Figma's "Auto"), whatever the box's sizing. */
+  readonly spaced: boolean;
+  readonly autoPrimary: boolean;
+  readonly autoCounter: boolean;
+}
+
+/**
+ * How the stored spacings apply to a flow layout (HORIZONTAL / VERTICAL). Auto spacing has
+ * nothing to spread on an axis that hugs its content, so there the stored gap is kept. The
+ * counter spacing — the gap between wrapped lines — is used only when the layout wraps.
+ */
+function flowSpacing(node: NodeChange): FlowSpacing {
+  const spaced = AUTO_SPACING.has(str(node, 'stackPrimaryAlignItems') ?? '');
+  const autoPrimary = spaced && !HUG.has(str(node, 'stackPrimarySizing') ?? '');
+  const wraps = str(node, 'stackWrap') === 'WRAP';
+  const autoCounter =
+    wraps &&
+    str(node, 'stackCounterAlignContent') === 'SPACE_BETWEEN' &&
+    !HUG.has(str(node, 'stackCounterSizing') ?? '');
+  return {
+    primary: autoPrimary ? undefined : r2(num(node, 'stackSpacing')),
+    counter: wraps && !autoCounter ? r2(num(node, 'stackCounterSpacing')) : undefined,
+    spaced,
+    autoPrimary,
+    autoCounter,
+  };
+}
+
 function autoLayoutOf(node: NodeChange): Record<string, unknown> | undefined {
   const mode = str(node, 'stackMode');
   if (!mode || mode === 'NONE') return undefined;
+  const flow = mode === 'HORIZONTAL' || mode === 'VERTICAL' ? flowSpacing(node) : undefined;
+  const primaryAlign = str(node, 'stackPrimaryAlignItems');
   return compact({
     mode,
-    spacing: r2(num(node, 'stackSpacing')),
-    counterSpacing: r2(num(node, 'stackCounterSpacing')),
+    spacing: flow ? (flow.autoPrimary ? 'auto' : flow.primary) : r2(num(node, 'stackSpacing')),
+    counterSpacing: flow
+      ? flow.autoCounter ? 'auto' : flow.counter
+      : r2(num(node, 'stackCounterSpacing')),
     padding: paddingOf(node),
-    primaryAlign: str(node, 'stackPrimaryAlignItems'),
+    primaryAlign: flow?.spaced ? 'SPACE_BETWEEN' : primaryAlign,
     counterAlign: str(node, 'stackCounterAlignItems'),
     counterAlignContent: str(node, 'stackCounterAlignContent'),
     primarySizing: str(node, 'stackPrimarySizing'),
@@ -236,6 +412,34 @@ export function lengthString(o: KiwiObject | undefined): string | undefined {
   }
 }
 
+/**
+ * A line height as CSS reads it. Figma stores its "Auto" line height — the font's own, about 1.2x
+ * the size — as 100 PERCENT (the REST API calls that unit INTRINSIC_%). On the iOS 16 UI Kit all
+ * 56 such texts are laid out at exactly their font's natural line height, which a CSS `100%`
+ * (1.0x the size) would not give, so it is reported as "auto" (CSS `normal`).
+ */
+export function lineHeightString(o: KiwiObject | undefined): string | undefined {
+  if (str(o, 'units') === 'PERCENT' && num(o, 'value') === 100) return 'auto';
+  return lengthString(o);
+}
+
+/** A letter spacing as CSS reads it: Figma's percent is of the font size, which CSS spells `em`. */
+export function letterSpacingString(o: KiwiObject | undefined): string | undefined {
+  const v = num(o, 'value');
+  if (str(o, 'units') !== 'PERCENT' || v === undefined) return lengthString(o);
+  return `${Math.round(v * 100) / 10_000}em`;
+}
+
+/**
+ * The colour of one SOLID paint as it shows: the paint's own opacity folded into the alpha, so
+ * `#3C3C43` at 60 % comes back as `#3C3C4399` rather than as an opaque colour.
+ */
+function shownColor(paint: KiwiObject): string | undefined {
+  const color = obj(paint, 'color');
+  if (!color) return undefined;
+  return colorHex({ ...color, a: (num(color, 'a') ?? 1) * (num(paint, 'opacity') ?? 1) });
+}
+
 const CHARACTERS_PREVIEW = 400;
 
 export function textBasics(node: NodeChange): Record<string, unknown> | undefined {
@@ -252,8 +456,8 @@ export function textBasics(node: NodeChange): Record<string, unknown> | undefine
       charactersTruncated: truncated || undefined,
       font: font ? `${str(font, 'family') ?? ''} ${str(font, 'style') ?? ''}`.trim() : undefined,
       fontSize: r2(num(node, 'fontSize')),
-      lineHeight: lengthString(obj(node, 'lineHeight')),
-      letterSpacing: lengthString(obj(node, 'letterSpacing')),
+      lineHeight: lineHeightString(obj(node, 'lineHeight')),
+      letterSpacing: letterSpacingString(obj(node, 'letterSpacing')),
       paragraphSpacing: r2(num(node, 'paragraphSpacing')),
       align: str(node, 'textAlignHorizontal'),
       verticalAlign: str(node, 'textAlignVertical'),
@@ -278,10 +482,12 @@ const STYLE_REF_FIELDS: Record<string, string> = {
 /**
  * Shared-style references.
  *
- * A style definition is stored as an ordinary (hidden) node parked on a canvas, carrying the
- * publishable `key` that `styleIdFor*.assetRef.key` points at — text styles are TEXT nodes, fill
- * styles are ROUNDED_RECTANGLE nodes. So a style used from the same file resolves to a real node
- * and, with `resolve`, to the values it defines. Styles from other libraries stay opaque refs.
+ * A style definition is stored as an ordinary (hidden) node parked on a canvas — text styles are
+ * TEXT nodes, fill styles are ROUNDED_RECTANGLE nodes. A published style is referenced by the
+ * publishable `key` it carries (`styleIdFor*.assetRef.key`), a style that was never published by
+ * its guid (`styleIdFor*.guid`). Either way a style used from the same file resolves to a real
+ * node and, with `resolve`, to the values it defines. Styles from other libraries stay opaque
+ * refs, and the detached-style sentinel is no style at all.
  */
 export function styleRefsOf(
   idx: FileIndex,
@@ -292,17 +498,22 @@ export function styleRefsOf(
   for (const [field, label] of Object.entries(STYLE_REF_FIELDS)) {
     const ref = obj(node, field);
     if (!ref) continue;
-    const local = idx.resolveAssetRef(ref);
     const guid = guidKey(obj(ref, 'guid') as Guid | undefined);
+    const assetRef = assetRefString(ref);
+    if (guid === DETACHED_STYLE_GUID && !assetRef) continue;
+    const local = idx.resolveAssetRef(ref) ?? resolveStyle(idx, ref);
     out[label] = compact({
       name: local ? str(local.node, 'name') : undefined,
       guid: local?.key ?? guid,
-      assetRef: assetRefString(ref),
+      assetRef,
       defines: opts.resolve && local ? styleDefinition(idx, label, local.node) : undefined,
     });
   }
   return orUndefined(out);
 }
+
+/** Typography fields a text style does not define: its node carries them only for its preview. */
+const NOT_IN_TEXT_STYLE = ['color', 'fills', 'align', 'verticalAlign', 'styles'] as const;
 
 /** The values a locally-defined style carries: typography for text, paints for fill/stroke. */
 function styleDefinition(
@@ -310,7 +521,11 @@ function styleDefinition(
   label: string,
   definition: NodeChange,
 ): Record<string, unknown> | undefined {
-  if (label === 'text') return orUndefined(typography(idx, definition));
+  if (label === 'text') {
+    const defined: Record<string, unknown> = typography(idx, definition);
+    for (const field of NOT_IN_TEXT_STYLE) delete defined[field];
+    return orUndefined(defined);
+  }
   if (label === 'effect') {
     const effects = objArr(definition, 'effects').map((e) => effectView(idx, e));
     return effects.length ? { effects } : undefined;
@@ -349,7 +564,10 @@ function componentOf(idx: FileIndex, t: TreeNode): Record<string, unknown> | und
   const type = str(node, 'type');
   if (type === 'INSTANCE') {
     const symbolData = obj(node, 'symbolData');
-    const symbolId = guidKey(obj(symbolData, 'symbolID') as Guid | undefined);
+    // A layer inside an instance may have had its symbol swapped by a record or a property.
+    const symbolId =
+      guidKey(obj(node, 'overriddenSymbolID') as Guid | undefined) ??
+      guidKey(obj(symbolData, 'symbolID') as Guid | undefined);
     const symbol = symbolId ? idx.node(symbolId) : undefined;
     return compact({
       role: 'INSTANCE',
@@ -428,12 +646,16 @@ export function nodeDetail(
   opts: NodeDetailOptions = {},
 ): Record<string, unknown> {
   const node = t.node;
+  // Paints, effects and typography as Figma shows them: a referenced style wins (F19, F22).
+  const live = applyStyles(idx, node, { text: true });
   const maxChildren = opts.maxChildren ?? 100;
-  const fills = objArr(node, 'fillPaints').map((p) => paintView(idx, p));
-  const strokes = objArr(node, 'strokePaints').map((p) => paintView(idx, p));
-  const effects = objArr(node, 'effects').map((e) => effectView(idx, e));
-  const images = nodeImageHashes(node);
+  const box = paintBox(node);
+  const fills = objArr(live, 'fillPaints').map((p) => paintView(idx, p, box));
+  const strokes = objArr(live, 'strokePaints').map((p) => paintView(idx, p, box));
+  const effects = objArr(live, 'effects').map((e) => effectView(idx, e));
+  const images = nodeImageHashes(live);
   const dashPattern = node['dashPattern'];
+  const stroked = hasVisibleStroke(live);
 
   return compact({
     guid: t.key,
@@ -462,18 +684,19 @@ export function nodeDetail(
 
     fills: fills.length ? fills : undefined,
     strokes: strokes.length ? strokes : undefined,
-    strokeWeight: num(node, 'strokeWeight') ? r2(num(node, 'strokeWeight')) : undefined,
-    strokeAlign: strokes.length ? str(node, 'strokeAlign') : undefined,
-    strokeCap: str(node, 'strokeCap'),
-    strokeJoin: strokes.length ? str(node, 'strokeJoin') : undefined,
-    dashPattern: Array.isArray(dashPattern) && dashPattern.length
+    strokeWeight: stroked && num(node, 'strokeWeight') ? r2(num(node, 'strokeWeight')) : undefined,
+    strokeWeights: stroked ? sideWeights(node) : undefined,
+    strokeAlign: stroked ? str(node, 'strokeAlign') : undefined,
+    strokeCap: stroked ? str(node, 'strokeCap') : undefined,
+    strokeJoin: stroked ? str(node, 'strokeJoin') : undefined,
+    dashPattern: stroked && Array.isArray(dashPattern) && dashPattern.length
       ? (dashPattern as number[]).map((v) => r2(v))
       : undefined,
     effects: effects.length ? effects : undefined,
 
     autoLayout: autoLayoutOf(node),
     layout: layoutChildOf(node),
-    text: textBasics(node),
+    text: textBasics(live),
     component: componentOf(idx, t),
     styles: styleRefsOf(idx, node),
     variables: variableBindingsOf(idx, node),
@@ -493,6 +716,8 @@ export function nodeDetail(
 /**
  * Typography of a node — or of a partial style-override record from a text run — reporting only
  * the fields it actually sets, so a run's block shows exactly what differs from the base style.
+ * Pass the node with its styles applied (`applyStyles(…, { text: true })`): the values cached
+ * beside a style reference can be stale (F19, F22).
  */
 export function typography(
   idx: FileIndex,
@@ -500,21 +725,23 @@ export function typography(
   opts: { includeStyleRefs?: boolean } = {},
 ): Record<string, unknown> {
   const font = obj(node, 'fontName');
-  const fills = objArr(node, 'fillPaints');
-  const solid = fills.find((p) => str(p, 'type') === 'SOLID');
+  // One colour only when one paint shows and it is solid; otherwise every paint that shows.
+  // (An invisible paint, or the first solid under two more, is not the text's colour.)
+  const shown = objArr(node, 'fillPaints').filter((p) => bool(p, 'visible') !== false);
+  const solid = shown.length === 1 && str(shown[0], 'type') === 'SOLID' ? shown[0] : undefined;
   return compact({
     font: font ? `${str(font, 'family') ?? ''} ${str(font, 'style') ?? ''}`.trim() : undefined,
     fontPostScript: str(font, 'postscript'),
     fontSize: r2(num(node, 'fontSize')),
-    lineHeight: lengthString(obj(node, 'lineHeight')),
-    letterSpacing: lengthString(obj(node, 'letterSpacing')),
+    lineHeight: lineHeightString(obj(node, 'lineHeight')),
+    letterSpacing: letterSpacingString(obj(node, 'letterSpacing')),
     paragraphSpacing: r2(num(node, 'paragraphSpacing')),
     textCase: str(node, 'textCase'),
     textDecoration: str(node, 'textDecoration'),
     align: str(node, 'textAlignHorizontal'),
     verticalAlign: str(node, 'textAlignVertical'),
-    color: solid ? colorHex(obj(solid, 'color')) : undefined,
-    fills: fills.length && !solid ? fills.map((p) => paintView(idx, p)) : undefined,
+    color: solid ? shownColor(solid) : undefined,
+    fills: shown.length && !solid ? shown.map((p) => paintView(idx, p, paintBox(node))) : undefined,
     // Runs express most overrides as a shared-style ref, so keep them here by default; the
     // caller turns them off when it already reports the node's style refs separately.
     styles: opts.includeStyleRefs === false ? undefined : styleRefsOf(idx, node),
@@ -565,13 +792,16 @@ export function styleBlock(idx: FileIndex, t: TreeNode): Record<string, unknown>
   const size = obj(node, 'size');
   const mode = str(node, 'stackMode');
   const padding = paddingOf(node);
+  // Under auto spacing `justify-content` alone reproduces Figma's gap; a `gap` taken from the
+  // ignored `stackSpacing` would be a CSS minimum that overflows a narrower box.
+  const flow = mode === 'HORIZONTAL' || mode === 'VERTICAL' ? flowSpacing(node) : undefined;
   const layout =
     mode && mode !== 'NONE'
       ? compact({
           display: 'flex',
           direction: mode === 'VERTICAL' ? 'column' : mode === 'GRID' ? 'grid' : 'row',
-          gap: r2(num(node, 'stackSpacing')),
-          rowGap: r2(num(node, 'stackCounterSpacing')),
+          gap: flow ? flow.primary : r2(num(node, 'stackSpacing')),
+          rowGap: flow ? flow.counter : r2(num(node, 'stackCounterSpacing')),
           padding: padding ? cssPadding(padding) : undefined,
           paddingBox: padding,
           justifyContent: JUSTIFY[str(node, 'stackPrimaryAlignItems') ?? ''],
@@ -601,11 +831,15 @@ export function styleBlock(idx: FileIndex, t: TreeNode): Record<string, unknown>
     }),
   );
 
-  const fills = objArr(node, 'fillPaints').map((p) => paintView(idx, p));
-  const strokes = objArr(node, 'strokePaints').map((p) => paintView(idx, p));
-  const effects = objArr(node, 'effects').map((e) => effectView(idx, e));
+  // Paints, effects and typography as Figma shows them: a referenced style wins (F19, F22).
+  const live = applyStyles(idx, node, { text: true });
+  const box = paintBox(node);
+  const fills = objArr(live, 'fillPaints').map((p) => paintView(idx, p, box));
+  const strokes = objArr(live, 'strokePaints').map((p) => paintView(idx, p, box));
+  const effects = objArr(live, 'effects').map((e) => effectView(idx, e));
   const type = str(node, 'type');
   const dashPattern = node['dashPattern'];
+  const stroked = hasVisibleStroke(live);
 
   return compact({
     guid: t.key,
@@ -618,16 +852,17 @@ export function styleBlock(idx: FileIndex, t: TreeNode): Record<string, unknown>
     cornerRadius: cornerRadiusOf(node),
     fills: fills.length ? fills : undefined,
     strokes: strokes.length ? strokes : undefined,
-    strokeWeight: num(node, 'strokeWeight') ? r2(num(node, 'strokeWeight')) : undefined,
-    strokeAlign: strokes.length ? str(node, 'strokeAlign') : undefined,
-    dashPattern: Array.isArray(dashPattern) && dashPattern.length
+    strokeWeight: stroked && num(node, 'strokeWeight') ? r2(num(node, 'strokeWeight')) : undefined,
+    strokeWeights: stroked ? sideWeights(node) : undefined,
+    strokeAlign: stroked ? str(node, 'strokeAlign') : undefined,
+    dashPattern: stroked && Array.isArray(dashPattern) && dashPattern.length
       ? (dashPattern as number[]).map((v) => r2(v))
       : undefined,
     effects: effects.length ? effects : undefined,
     layout,
     inParentLayout: inParent,
     typography:
-      type === 'TEXT' ? orUndefined(typography(idx, node, { includeStyleRefs: false })) : undefined,
+      type === 'TEXT' ? orUndefined(typography(idx, live, { includeStyleRefs: false })) : undefined,
     constraints: orUndefined(
       compact({
         horizontal: str(node, 'horizontalConstraint'),

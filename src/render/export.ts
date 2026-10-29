@@ -72,17 +72,20 @@ const RECTANGULAR = new Set([
   'GROUP',
 ]);
 
-/** Per-corner radii in SVG order: top-left, top-right, bottom-right, bottom-left. */
-function cornerRadii(node: NodeChange): [number, number, number, number] {
+/**
+ * Per-corner radii in SVG order: top-left, top-right, bottom-right, bottom-left. With independent
+ * corners a corner the record does not write is square, not the uniform radius (F24).
+ */
+export function cornerRadii(node: NodeChange): [number, number, number, number] {
   const uniform = num(node, 'cornerRadius') ?? 0;
   if (bool(node, 'rectangleCornerRadiiIndependent') !== true) {
     return [uniform, uniform, uniform, uniform];
   }
   return [
-    num(node, 'rectangleTopLeftCornerRadius') ?? uniform,
-    num(node, 'rectangleTopRightCornerRadius') ?? uniform,
-    num(node, 'rectangleBottomRightCornerRadius') ?? uniform,
-    num(node, 'rectangleBottomLeftCornerRadius') ?? uniform,
+    num(node, 'rectangleTopLeftCornerRadius') ?? 0,
+    num(node, 'rectangleTopRightCornerRadius') ?? 0,
+    num(node, 'rectangleBottomRightCornerRadius') ?? 0,
+    num(node, 'rectangleBottomLeftCornerRadius') ?? 0,
   ];
 }
 
@@ -97,11 +100,25 @@ export interface NodeBox {
   readonly box: Box;
 }
 
+/**
+ * The instance a layer is drawn inside of, when the root is a layer of an instance rather than a
+ * stored node (model/scene.ts): the records and property values of the expansion it belongs to.
+ */
+export interface ExportContext {
+  readonly records: OverrideRecords;
+  readonly props: PropAssignments;
+  /** Def-id scope, unique to the instance, so its ids never collide with the symbol's own. */
+  readonly scope: string;
+  /** Symbols already being expanded around the root, for the recursion guard. */
+  readonly active: Iterable<string>;
+}
+
 export interface ExportOptions {
   readonly maxNodes?: number;
   readonly collectBoxes?: boolean;
   /** CSS colour painted behind everything; omitted for a transparent render. */
   readonly background?: string;
+  readonly context?: ExportContext;
 }
 
 export interface ExportResult {
@@ -150,6 +167,13 @@ class Exporter {
     this.maxVisits = Math.min(maxNodes * VISIT_FACTOR, HARD_MAX_VISITS);
     this.collectBoxes = opts.collectBoxes === true;
     this.background = opts.background;
+    if (opts.context) {
+      // A layer of an instance: start inside that instance, exactly as emitInstance would.
+      this.frame = opts.context.records;
+      this.props = opts.context.props;
+      this.defScope = opts.context.scope;
+      for (const symbol of opts.context.active) this.activeSymbols.add(symbol);
+    }
   }
 
   private blob(index: number | undefined): Uint8Array | undefined {

@@ -5,3 +5,5 @@ reports/
 # Fixture .fig files are the user's own designs and can be large; commit only small
 # conformance fixtures deliberately.
 fixtures/*/design.fig
+# The golden-test assets (sample.fig, ios-16-ui-kit.fig) are local copies, never committed.
+figma-input/

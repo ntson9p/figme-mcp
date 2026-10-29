@@ -265,6 +265,47 @@ glyphs); the run is `textData.characterStyleIDs[firstCharacter]`, one entry per 
 an implicit 0 past the end of the array (413 texts have a full array, 101 a shorter one, none a
 longer one).
 
+**F22 — A referenced text style is the live source of its typography** (measured 2026-10-30
+on the iOS 16 UI Kit community file). `styleIdForText` behaves like F19's colour references:
+the `fontName`, `fontSize`, `lineHeight` and `letterSpacing` cached beside it are what the node
+looked like when it was last touched. 75 of the file's 1 474 text nodes with a local text style
+disagree with it, and wherever they do, Figma's own layout of the text (`derivedTextData`:
+glyph `fontSize`, `fontMetaData`) follows the STYLE — 39 of 39 sizes, 22 of 22 families, 26 of
+26 weights. The DatePicker header `55:4649` caches 20 px SF Pro Display at +0.38 px while its
+glyphs are 17 px SF Pro Text at −0.408 px, the "Body/Bold" style. A text style defines font,
+size, line height, letter spacing, paragraph spacing and indent, case and decoration — not
+alignment or colour, which its node carries only for its own preview. The renderer never needs
+this (glyphs are baked, F5), but every number the inspection tools report does: since
+2026-10-30 `fig_node`, `fig_style`, `fig_text` and `fig_instance` resolve F19 and F22 through
+the same `model/styles.ts` the exporter uses (765 stored nodes of that file cache a fill that
+disagrees with their colour style).
+
+**F23 — An `overrideKey` of `4294967295:4294967295` is no key** (measured 2026-10-30 on the iOS
+16 UI Kit). The value Figma writes for a detached style (F19) also turns up as an `overrideKey`:
+30 of the file's 44 keyed layers carry it, no record path segment ever equals it, and 31 segments
+name those layers by their own guid instead — the "Bottom Row" of every AlphabeticKeyboard, for
+one. Taken literally, every such layer of a component shared one identity, so a record meant
+for one of them reached none, and `fig_instance` could not name its target. `overrideIdentity`
+falls back to the guid for it, as for a layer with no key.
+
+**F24 — With independent corner radii, an unwritten corner is square** (measured 2026-10-30 on
+the iOS 16 UI Kit). Of the nodes with `rectangleCornerRadiiIndependent`, 162 corners have no
+`rectangle…CornerRadius` field, and every one of them is square in the node's own `fillGeometry`
+— 38 of them beside a non-zero `cornerRadius`, such as a notification rounded only at the top
+(`23, 23, 0, 0`) or an action-sheet button rounded at one end. Falling back to `cornerRadius`
+rounded all four. The renderer reads these fields only for a shape it rebuilds from size and
+radii (§4.14, F20); the inspection tools report them for every node.
+
+**F25 — Independent stroke sides are drawn at their own weights** (measured 2026-10-30 on the
+iOS 16 UI Kit). With `borderStrokeWeightsIndependent`, `border{Top,Right,Bottom,Left}Weight` set
+each side and `strokeWeight` describes none of them: 251 of the file's 619 stroked nodes have
+differing sides, such as the 0.5 px hairline under every navigation bar (`bottom: 0.5`, with a
+`strokeWeight` of 0) and over every tab bar (`top: 0.5`, with 1). For the 245 nodes with exactly
+one side set, `strokeGeometry` lies along that edge alone. The exporter draws `strokeGeometry`
+and needs none of this; the inspection tools report the sides as `strokeWeights`. Conversely,
+`strokeWeight` is written on nearly every node — 5 842 of this file's nodes have one and no
+stroke at all — so it is reported only beside a stroke that shows.
+
 **F15 — Existing APIs to reuse** (do not duplicate): `FileCache.get(file): CacheEntry
 { fig, index }`, `FileIndex.node(guid)`, `FileIndex.subtreeRange(root)`, `TreeNode
 { key, node, children, parent }`, accessors `str/num/bool/obj/arr/objArr/bytes/hex` in
@@ -1388,12 +1429,14 @@ fixtures; check each file's licence before committing it.
 21. **A record path segment is `overrideKey ?? guid`** (F17). Components created in the file
     itself have no `overrideKey` on their children; look those records up by key alone and
     every override of every native component vanishes, with nothing in the report to say so.
+    An `overrideKey` of `4294967295:4294967295` counts as none (F23).
 22. **Hidden-by-property is invisible in the records** (F18). No `visible:false` record ever
     mirrors a BOOLEAN=false assignment; evaluate `componentPropRefs` against the assignments or
     every switched-off icon is drawn.
 23. **The cached paint beside a style reference lies** (F19). Resolve `styleIdFor*` to the
     local style's paints on nodes, on records and on text-run entries; keep the cache only for
-    remote styles and the detached sentinel.
+    remote styles and the detached sentinel. The cached typography beside `styleIdForText`
+    lies the same way (F22) — it changes no pixel, but every reported font size does.
 24. **Measure inside instances on the effective node** (F20). Bounds, mask regions and clips
     computed on the raw symbol tree are the symbol's size; memoise per instance scope, and drop
     geometry a resizing record did not re-derive.

@@ -24,14 +24,20 @@ export function guidKey(g: Guid | undefined): string | undefined {
  *
  * Figma writes node ids with a dash in links (`node-id=3017-121`), older links percent-encode
  * the colon, and people paste the whole link. A guid is always two integers, so `3017-121` can
- * never be a valid one itself and rewriting it is unambiguous. Anything unrecognised is handed
- * back untouched, so a genuine typo still fails loudly instead of being guessed at.
+ * never be a valid one itself and rewriting it is unambiguous. A layer inside a component
+ * instance has an id of the form `I<guid>;<guid>…` (model/scene.ts), which links write as
+ * `I3017-121%3B5-6`; it is canonicalised segment by segment. Anything unrecognised is handed back
+ * untouched, so a genuine typo still fails loudly instead of being guessed at.
  */
 export function canonicalGuid(input: string): string {
   const raw = input.trim();
   const inLink = /(?:^|[?&#])node-id=([^&#\s]+)/i.exec(raw);
-  const pair = /^(\d+)[:-](\d+)$/.exec(decode(inLink ? inLink[1]! : raw).trim());
-  return pair ? `${pair[1]}:${pair[2]}` : raw;
+  const text = decode(inLink ? inLink[1]! : raw).trim();
+  const pair = /^(\d+)[:-](\d+)$/.exec(text);
+  if (pair) return `${pair[1]}:${pair[2]}`;
+  const sublayer = /^I(\d+[:-]\d+(?:;\d+[:-]\d+)+)$/.exec(text);
+  if (sublayer) return `I${sublayer[1]!.split(';').map((g) => g.replace('-', ':')).join(';')}`;
+  return raw;
 }
 
 function decode(s: string): string {
@@ -48,7 +54,8 @@ export function guidNotFound(input: string, key: string): string {
   return (
     `no node with guid ${JSON.stringify(input)}${read} in this file. ` +
     'Guids look like "2:1339"; a Figma link spells the same id "node-id=3017-121", and ' +
-    'that form, or the whole link, is accepted. Use fig_find or fig_tree to find guids.'
+    'that form, or the whole link, is accepted. A layer inside a component instance is ' +
+    '"I<instance guid>;<layer guid>", as fig_tree lists it. Use fig_find or fig_tree to find guids.'
   );
 }
 
@@ -69,15 +76,24 @@ export interface TreeNode {
 }
 
 /**
+ * The "no value" guid Figma writes into a guid field that is unset: a detached style reference
+ * (render-implementation-plan.md F19) and an `overrideKey` that names nothing.
+ */
+export const NO_GUID = '4294967295:4294967295';
+
+/**
  * The identity that instance override paths (`symbolData.symbolOverrides[].guidPath.guids` and
  * `derivedSymbolData[].guidPath.guids`) use for a component descendant: its `overrideKey` when
  * it has one — a node created by copying a component keeps the original's — else its own guid.
  *
  * Measured on the sample: 8 893 of 10 480 symbol descendants carry an explicit key; the other
- * 1 587 are addressed by guid, by 30 061 of the file's 303 833 records.
+ * 1 587 are addressed by guid, by 30 061 of the file's 303 833 records. An `overrideKey` of
+ * `NO_GUID` is no key at all (F23): on the iOS 16 UI Kit 30 of the 44 keyed layers carry it, no
+ * record path ever names it, and 31 record path segments name those layers by their guid.
  */
 export function overrideIdentity(t: TreeNode): string {
-  return readGuid(t.node, 'overrideKey') ?? t.key;
+  const key = readGuid(t.node, 'overrideKey');
+  return key !== undefined && key !== NO_GUID ? key : t.key;
 }
 
 export interface Tree {
