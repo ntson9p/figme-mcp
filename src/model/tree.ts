@@ -69,15 +69,24 @@ export interface TreeNode {
 }
 
 /**
+ * The "no value" guid Figma writes into a guid field that is unset: a detached style reference
+ * (render-implementation-plan.md F19) and an `overrideKey` that names nothing.
+ */
+export const NO_GUID = '4294967295:4294967295';
+
+/**
  * The identity that instance override paths (`symbolData.symbolOverrides[].guidPath.guids` and
  * `derivedSymbolData[].guidPath.guids`) use for a component descendant: its `overrideKey` when
  * it has one — a node created by copying a component keeps the original's — else its own guid.
  *
  * Measured on the sample: 8 893 of 10 480 symbol descendants carry an explicit key; the other
- * 1 587 are addressed by guid, by 30 061 of the file's 303 833 records.
+ * 1 587 are addressed by guid, by 30 061 of the file's 303 833 records. An `overrideKey` of
+ * `NO_GUID` is no key at all (F23): on the iOS 16 UI Kit 30 of the 44 keyed layers carry it, no
+ * record path ever names it, and 31 record path segments name those layers by their guid.
  */
 export function overrideIdentity(t: TreeNode): string {
-  return readGuid(t.node, 'overrideKey') ?? t.key;
+  const key = readGuid(t.node, 'overrideKey');
+  return key !== undefined && key !== NO_GUID ? key : t.key;
 }
 
 export interface Tree {

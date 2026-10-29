@@ -280,6 +280,14 @@ this (glyphs are baked, F5), but every number the inspection tools report does: 
 the same `model/styles.ts` the exporter uses (765 stored nodes of that file cache a fill that
 disagrees with their colour style).
 
+**F23 — An `overrideKey` of `4294967295:4294967295` is no key** (measured 2026-10-30 on the iOS
+16 UI Kit). The value Figma writes for a detached style (F19) also turns up as an `overrideKey`:
+30 of the file's 44 keyed layers carry it, no record path segment ever equals it, and 31 segments
+name those layers by their own guid instead — the "Bottom Row" of every AlphabeticKeyboard, for
+one. Taken literally, every such layer of a component shared one identity, so a record meant
+for one of them reached none, and `fig_instance` could not name its target. `overrideIdentity`
+falls back to the guid for it, as for a layer with no key.
+
 **F15 — Existing APIs to reuse** (do not duplicate): `FileCache.get(file): CacheEntry
 { fig, index }`, `FileIndex.node(guid)`, `FileIndex.subtreeRange(root)`, `TreeNode
 { key, node, children, parent }`, accessors `str/num/bool/obj/arr/objArr/bytes/hex` in
@@ -1403,6 +1411,7 @@ fixtures; check each file's licence before committing it.
 21. **A record path segment is `overrideKey ?? guid`** (F17). Components created in the file
     itself have no `overrideKey` on their children; look those records up by key alone and
     every override of every native component vanishes, with nothing in the report to say so.
+    An `overrideKey` of `4294967295:4294967295` counts as none (F23).
 22. **Hidden-by-property is invisible in the records** (F18). No `visible:false` record ever
     mirrors a BOOLEAN=false assignment; evaluate `componentPropRefs` against the assignments or
     every switched-off icon is drawn.

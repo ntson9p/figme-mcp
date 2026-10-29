@@ -20,7 +20,7 @@
 import type { KiwiObject } from '../fig/kiwi.js';
 import type { NodeChange } from '../fig/parse.js';
 import type { FileIndex } from './index.js';
-import { guidKey, type Guid, type TreeNode } from './tree.js';
+import { guidKey, NO_GUID, type Guid, type TreeNode } from './tree.js';
 import { obj, objArr, str } from './access.js';
 
 export type StyleType = 'FILL' | 'EFFECT' | 'TEXT' | 'GRID';
@@ -28,7 +28,7 @@ export type StyleType = 'FILL' | 'EFFECT' | 'TEXT' | 'GRID';
 type StyleIndex = Pick<FileIndex, 'node' | 'resolveAssetRef'>;
 
 /** The guid a detached style reference is written with (plan F19). */
-export const DETACHED_STYLE_GUID = '4294967295:4294967295';
+export const DETACHED_STYLE_GUID = NO_GUID;
 
 /**
  * The local node defining a style reference: by publishable key for `{assetRef:{key}}`, by guid

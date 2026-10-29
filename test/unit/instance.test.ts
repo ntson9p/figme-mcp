@@ -49,6 +49,22 @@ test('overrideIdentity is the overrideKey when present, else the guid', () => {
   assert.equal(overrideIdentity(tree('2:5', {})), '2:5');
 });
 
+test('an overrideKey of the no-value guid is no key: the layer is addressed by its guid (F23)', () => {
+  const none = { sessionID: 4294967295, localID: 4294967295 };
+  assert.equal(overrideIdentity(tree('2:5', { overrideKey: none })), '2:5');
+
+  // Two such layers in one component used to share that "key", so a record meant for one —
+  // addressed, as Figma does, by its guid — reached neither.
+  const a = tree('2:11', { type: 'VECTOR', overrideKey: none });
+  const b = tree('2:12', { type: 'VECTOR', overrideKey: none });
+  const symbol = tree('2:10', { type: 'SYMBOL' }, [a, b]);
+  const records = new Map([[overrideIdentity(b), { visible: false }]]);
+  assert.equal(records.get(overrideIdentity(a)), undefined);
+  assert.deepEqual(records.get(overrideIdentity(b)), { visible: false });
+  assert.notEqual(overrideIdentity(a), overrideIdentity(b));
+  assert.equal(symbol.children.length, 2);
+});
+
 // ------------------------------------------------------------------------------- mergeNode
 
 test('mergeNode overlays a record but never its addressing fields', () => {

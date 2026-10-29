@@ -426,3 +426,11 @@ exactly its "Body/Bold" style. Every text style node in the file carries `fontNa
 only when not the default. The same file also confirms §8.7 at scale: 765 stored nodes cache a
 fill that disagrees with their colour style, 50 a stroke and 8 an effect, and the styles there
 are referenced by `guid` (they were never published), not by `assetRef`.
+
+### 9.2 `4294967295:4294967295` is "no guid", in `overrideKey` too
+
+The detached-style sentinel of §8.7 also appears as an `overrideKey`: 30 of the 44 layers that
+carry one carry this value. No record path segment ever equals it; 31 segments address those
+layers by their guid. It therefore means "no key", and the layer's identity is its guid — read
+literally, all such layers of a component would share one identity and none of their records
+would apply.
