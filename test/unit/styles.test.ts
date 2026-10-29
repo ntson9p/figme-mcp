@@ -1,32 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { ParsedFig } from '../../dist/fig/parse.js';
 import type { KiwiObject } from '../../dist/fig/kiwi.js';
-import { FileIndex } from '../../dist/model/index.js';
 import { applyStyles, resolveStyle, DETACHED_STYLE_GUID } from '../../dist/model/styles.js';
 import { nodeDetail, styleBlock, styleRefsOf } from '../../dist/model/summarize.js';
 import { textView } from '../../dist/model/text.js';
 import { overrideFields } from '../../dist/model/components.js';
-
-const guid = (s: string) => {
-  const [sessionID, localID] = s.split(':').map(Number);
-  return { sessionID, localID };
-};
+import { fileOf, guid } from '../fixtures/file.ts';
 
 const solid = (r: number, g: number, b: number, a = 1) => ({ type: 'SOLID', color: { r, g, b, a }, opacity: 1, visible: true });
 const RED = solid(1, 0.23137255, 0.18823530);
 const BLACK = solid(0, 0, 0);
 const WHITE = solid(1, 1, 1);
-
-/** A file: DOCUMENT 0:0 › CANVAS 0:1 › every node given, parented to 0:1 unless it says otherwise. */
-function fileOf(nodes: KiwiObject[]): FileIndex {
-  const nodeChanges = [
-    { guid: guid('0:0'), type: 'DOCUMENT', name: 'Document' },
-    { guid: guid('0:1'), type: 'CANVAS', name: 'Page', parentIndex: { guid: guid('0:0'), position: '!' } },
-    ...nodes.map((n, i) => ({ parentIndex: { guid: guid('0:1'), position: String.fromCharCode(34 + i) }, ...n })),
-  ];
-  return new FileIndex({ nodeChanges } as unknown as ParsedFig);
-}
 
 // The shape of the DatePicker header in the iOS 16 UI Kit: the text style says 17px SF Pro Text,
 // the fill style says black, and the copy cached beside both references says otherwise.

@@ -14,11 +14,13 @@ import * as path from 'node:path';
 import { REPO_ROOT } from '../fixtures/asset.ts';
 import { parseFig } from '../../dist/fig/parse.js';
 import { FileIndex } from '../../dist/model/index.js';
+import { styleBlock } from '../../dist/model/summarize.js';
 import { textView } from '../../dist/model/text.js';
 import { connect, type Harness } from '../fixtures/mcp.ts';
 
 const IOS16_PATH = process.env['FIGME_IOS16_FIG'] ?? path.join(REPO_ROOT, 'figma-input', 'ios-16-ui-kit.fig');
-const skip = fs.existsSync(IOS16_PATH)
+const exists = fs.existsSync(IOS16_PATH);
+const skip = exists
   ? false
   : `iOS 16 UI Kit not found at ${IOS16_PATH} — save the Figma Community file there, or set FIGME_IOS16_FIG, to run these tests`;
 
@@ -26,15 +28,16 @@ let index: FileIndex;
 let harness: Harness;
 const file = IOS16_PATH;
 
-describe('iOS 16 UI Kit — shared styles are live (F19, F22)', { skip }, () => {
-  before(async () => {
-    index = new FileIndex(parseFig(fs.readFileSync(IOS16_PATH)));
-    harness = await connect();
-  });
-  after(async () => {
-    await harness?.close();
-  });
+before(async () => {
+  if (!exists) return;
+  index = new FileIndex(parseFig(fs.readFileSync(IOS16_PATH)));
+  harness = await connect();
+});
+after(async () => {
+  await harness?.close();
+});
 
+describe('iOS 16 UI Kit — shared styles are live (F19, F22)', { skip }, () => {
   it('is the community file these values were measured on', () => {
     assert.equal(index.fig.meta?.file_name, 'iOS 16 UI Kit for Figma (Community)');
     assert.equal(index.node('1319:26210')?.node['name'], 'DatePicker');
@@ -102,5 +105,52 @@ describe('iOS 16 UI Kit — shared styles are live (F19, F22)', { skip }, () => 
     assert.equal(digit['fields'].text.fontSize, 20);
     assert.equal(digit['fields'].text.font, 'SF Pro Display Semibold');
     assert.equal((digit['otherFields'] ?? []).includes('styleIdForFill'), false);
+  });
+});
+
+describe('iOS 16 UI Kit — auto-layout spacing', { skip }, () => {
+  it('every reported gap is the gap Figma laid the children out with', () => {
+    // Children of an auto-layout frame carry the transforms Figma's layout produced. Before the
+    // fix, 88 frames with "Auto" spacing reported a stored gap their children do not have.
+    let fixed = 0;
+    let auto = 0;
+    const wrong: string[] = [];
+    for (const t of index.tree.ordered) {
+      const mode = t.node['stackMode'];
+      if (mode !== 'HORIZONTAL' && mode !== 'VERTICAL') continue;
+      const kids = t.children.filter(
+        (c) => c.node['visible'] !== false && c.node['stackPositioning'] !== 'ABSOLUTE',
+      );
+      if (kids.length < 2) continue;
+      const span = (c: (typeof kids)[number]): [number, number] => {
+        const m = c.node['transform'] as Record<string, number>;
+        const s = c.node['size'] as Record<string, number>;
+        return mode === 'HORIZONTAL' ? [m['m02']!, m['m02']! + s['x']!] : [m['m12']!, m['m12']! + s['y']!];
+      };
+      const gaps = kids.slice(1).map((c, i) => span(c)[0] - span(kids[i]!)[1]);
+      const layout = styleBlock(index, t)['layout'] as Record<string, unknown>;
+      if (layout['justifyContent'] === 'space-between' && layout['gap'] === undefined) {
+        auto++;
+        if (gaps.some((g) => Math.abs(g - gaps[0]!) > 0.02)) wrong.push(`${t.key}: uneven auto gaps ${gaps}`);
+        continue;
+      }
+      fixed++;
+      const gap = (layout['gap'] as number | undefined) ?? 0;
+      if (gaps.some((g) => Math.abs(g - gap) > 0.02)) wrong.push(`${t.key}: reported ${gap}, laid out ${gaps}`);
+    }
+    assert.ok(fixed > 1_000, `${fixed} fixed-gap frames`);
+    assert.ok(auto >= 90, `${auto} auto-spacing frames`);
+    assert.deepEqual(wrong, []);
+  });
+
+  it('the DatePicker month header has auto spacing, not its stored 141 px', async () => {
+    const node = await harness.call('fig_node', { file, guid: '55:4647', includeChildren: false });
+    const autoLayout = (node.json['node'] as Record<string, any>)['autoLayout'];
+    assert.equal(autoLayout.spacing, 'auto');
+    assert.equal(autoLayout.primaryAlign, 'SPACE_BETWEEN');
+    const style = await harness.call('fig_style', { file, guid: '55:4647' });
+    const layout = (style.json['style'] as Record<string, any>)['layout'];
+    assert.equal(layout.gap, undefined);
+    assert.equal(layout.justifyContent, 'space-between');
   });
 });

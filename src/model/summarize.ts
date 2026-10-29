@@ -184,15 +184,63 @@ export function paddingOf(node: NodeChange): Padding | undefined {
   };
 }
 
+/**
+ * Figma's "Auto" spacing: the gap is whatever spreads the children across the box, and the stored
+ * `stackSpacing` is ignored. Kiwi writes it as SPACE_EVENLY; the plugin and REST APIs call it
+ * SPACE_BETWEEN, and so does newer kiwi. Measured on the iOS 16 UI Kit: all 93 SPACE_EVENLY frames
+ * with two or more in-flow children sit flush against both paddings with equal gaps — CSS
+ * `justify-content: space-between` — and in 88 of them that gap is not the stored `stackSpacing`.
+ */
+const AUTO_SPACING = new Set(['SPACE_EVENLY', 'SPACE_BETWEEN']);
+
+const HUG = new Set(['RESIZE_TO_FIT', 'RESIZE_TO_FIT_WITH_IMPLICIT_SIZE']);
+
+interface FlowSpacing {
+  /** The gap between children; undefined when Figma computes it (auto spacing). */
+  readonly primary?: number;
+  /** The gap between wrapped lines; undefined unless the layout wraps with a fixed gap. */
+  readonly counter?: number;
+  /** The children are spread across the box (Figma's "Auto"), whatever the box's sizing. */
+  readonly spaced: boolean;
+  readonly autoPrimary: boolean;
+  readonly autoCounter: boolean;
+}
+
+/**
+ * How the stored spacings apply to a flow layout (HORIZONTAL / VERTICAL). Auto spacing has
+ * nothing to spread on an axis that hugs its content, so there the stored gap is kept. The
+ * counter spacing — the gap between wrapped lines — is used only when the layout wraps.
+ */
+function flowSpacing(node: NodeChange): FlowSpacing {
+  const spaced = AUTO_SPACING.has(str(node, 'stackPrimaryAlignItems') ?? '');
+  const autoPrimary = spaced && !HUG.has(str(node, 'stackPrimarySizing') ?? '');
+  const wraps = str(node, 'stackWrap') === 'WRAP';
+  const autoCounter =
+    wraps &&
+    str(node, 'stackCounterAlignContent') === 'SPACE_BETWEEN' &&
+    !HUG.has(str(node, 'stackCounterSizing') ?? '');
+  return {
+    primary: autoPrimary ? undefined : r2(num(node, 'stackSpacing')),
+    counter: wraps && !autoCounter ? r2(num(node, 'stackCounterSpacing')) : undefined,
+    spaced,
+    autoPrimary,
+    autoCounter,
+  };
+}
+
 function autoLayoutOf(node: NodeChange): Record<string, unknown> | undefined {
   const mode = str(node, 'stackMode');
   if (!mode || mode === 'NONE') return undefined;
+  const flow = mode === 'HORIZONTAL' || mode === 'VERTICAL' ? flowSpacing(node) : undefined;
+  const primaryAlign = str(node, 'stackPrimaryAlignItems');
   return compact({
     mode,
-    spacing: r2(num(node, 'stackSpacing')),
-    counterSpacing: r2(num(node, 'stackCounterSpacing')),
+    spacing: flow ? (flow.autoPrimary ? 'auto' : flow.primary) : r2(num(node, 'stackSpacing')),
+    counterSpacing: flow
+      ? flow.autoCounter ? 'auto' : flow.counter
+      : r2(num(node, 'stackCounterSpacing')),
     padding: paddingOf(node),
-    primaryAlign: str(node, 'stackPrimaryAlignItems'),
+    primaryAlign: flow?.spaced ? 'SPACE_BETWEEN' : primaryAlign,
     counterAlign: str(node, 'stackCounterAlignItems'),
     counterAlignContent: str(node, 'stackCounterAlignContent'),
     primarySizing: str(node, 'stackPrimarySizing'),
@@ -581,13 +629,16 @@ export function styleBlock(idx: FileIndex, t: TreeNode): Record<string, unknown>
   const size = obj(node, 'size');
   const mode = str(node, 'stackMode');
   const padding = paddingOf(node);
+  // Under auto spacing `justify-content` alone reproduces Figma's gap; a `gap` taken from the
+  // ignored `stackSpacing` would be a CSS minimum that overflows a narrower box.
+  const flow = mode === 'HORIZONTAL' || mode === 'VERTICAL' ? flowSpacing(node) : undefined;
   const layout =
     mode && mode !== 'NONE'
       ? compact({
           display: 'flex',
           direction: mode === 'VERTICAL' ? 'column' : mode === 'GRID' ? 'grid' : 'row',
-          gap: r2(num(node, 'stackSpacing')),
-          rowGap: r2(num(node, 'stackCounterSpacing')),
+          gap: flow ? flow.primary : r2(num(node, 'stackSpacing')),
+          rowGap: flow ? flow.counter : r2(num(node, 'stackCounterSpacing')),
           padding: padding ? cssPadding(padding) : undefined,
           paddingBox: padding,
           justifyContent: JUSTIFY[str(node, 'stackPrimaryAlignItems') ?? ''],

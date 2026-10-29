@@ -130,6 +130,11 @@ root 2:1339 "Frame 39" depth<=3
 is the forward-compatibility escape hatch: anything the mappers do not understand yet is still
 reachable there. Limited to one node per call.
 
+Auto-layout uses the names of Figma's plugin and REST APIs. A frame with "Auto" spacing — stored
+as `SPACE_EVENLY` — reports `"primaryAlign": "SPACE_BETWEEN", "spacing": "auto"`: Figma spreads
+the children across the box and ignores the stored gap, so no number is reported for it.
+Likewise `counterSpacing`, the gap between wrapped lines, appears only on a layout that wraps.
+
 ### 4. `fig_find` — search names and copy
 
 `query` (case-insensitive substring, matched against layer names **and** text content), plus
@@ -186,6 +191,10 @@ Every paint, effect and typography value that comes from a shared style is the s
 value, the one Figma draws and lays the text out with — not the copy cached on the node beside
 the reference, which can be stale. `fig_node`, `fig_text` and `fig_instance` report the same live
 values, and name the style whether it was published (`assetRef`) or not (`guid`).
+
+A frame with Figma's "Auto" spacing comes back as `justifyContent: "space-between"` with no
+`gap`: Figma ignores the stored gap there, and as a CSS `gap` it would become a minimum that
+overflows a narrower box. `rowGap` appears only on a layout that wraps.
 
 ### 7. `fig_components` — the component catalogue
 
