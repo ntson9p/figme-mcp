@@ -205,6 +205,7 @@ class Exporter {
    */
   private effective(t: TreeNode): NodeChange {
     let node = t.node;
+    let staleOutlines = false;
     if (this.frame) {
       const record = this.frame.get(overrideIdentity(t));
       node = mergeNode(node, record);
@@ -212,10 +213,13 @@ class Exporter {
       if (applied.node !== node) {
         this.report.seen('instance-property');
         node = applied.node;
-        if (applied.staleOutlines) this.staleOutlines.add(node);
+        staleOutlines = applied.staleOutlines;
       }
     }
-    return applyStyles(this.entry.index, node);
+    const live = applyStyles(this.entry.index, node);
+    // Marked on the node `emitText` is handed: resolving a style above returns a new record.
+    if (staleOutlines) this.staleOutlines.add(live);
+    return live;
   }
 
   /** Def keys must not collide between two instances of the same symbol with different fills. */

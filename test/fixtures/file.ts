@@ -13,7 +13,7 @@ export const guid = (s: string) => {
 
 type SyntheticRecord = KiwiObject & { parent?: string };
 
-function figOf(records: SyntheticRecord[]): ParsedFig {
+function figOf(records: SyntheticRecord[], blobs: readonly Uint8Array[] = []): ParsedFig {
   const nodeChanges = [
     { guid: guid('0:0'), type: 'DOCUMENT', name: 'Document' },
     { guid: guid('0:1'), type: 'CANVAS', name: 'Page', parentIndex: { guid: guid('0:0'), position: '!' } },
@@ -22,7 +22,26 @@ function figOf(records: SyntheticRecord[]): ParsedFig {
       ...n,
     })),
   ];
-  return { nodeChanges, blobs: [] } as unknown as ParsedFig;
+  return { nodeChanges, blobs: blobs.map((bytes) => ({ bytes })) } as unknown as ParsedFig;
+}
+
+/**
+ * A path-command blob (F4): `[op, ...floats]` per command — 0 close, 1 moveTo, 2 lineTo — as one
+ * opcode byte followed by little-endian float32 arguments.
+ */
+export function pathBlob(...commands: number[][]): Uint8Array {
+  const size = commands.reduce((n, [, ...args]) => n + 1 + 4 * args.length, 0);
+  const out = new Uint8Array(size);
+  const view = new DataView(out.buffer);
+  let at = 0;
+  for (const [op, ...args] of commands) {
+    out[at++] = op!;
+    for (const v of args) {
+      view.setFloat32(at, v, true);
+      at += 4;
+    }
+  }
+  return out;
 }
 
 /**
@@ -35,10 +54,11 @@ export function fileOf(records: SyntheticRecord[]): FileIndex {
 }
 
 /**
- * The same file as a cache entry, for the renderer. It has no blobs, so a shape is drawn from its
- * size and corner radii (§4.14) and text without glyph outlines is reported rather than drawn.
+ * The same file as a cache entry, for the renderer. `blobs` is the file's blob table; a shape
+ * without geometry is drawn from its size and corner radii (§4.14), and text without glyph
+ * outlines is reported rather than drawn.
  */
-export function entryOf(records: SyntheticRecord[]): CacheEntry {
-  const fig = figOf(records);
+export function entryOf(records: SyntheticRecord[], blobs: readonly Uint8Array[] = []): CacheEntry {
+  const fig = figOf(records, blobs);
   return { path: 'synthetic.fig', mtimeMs: 0, size: 0, fig, index: new FileIndex(fig), loadedAt: 0 };
 }
