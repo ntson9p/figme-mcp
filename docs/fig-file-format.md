@@ -503,3 +503,38 @@ resizes it, as it would for a node that paints (§8.8). The stored outline (`fil
 appearance — paints with their style reference, the stroke-weight group and the corner group
 taken whole — is compared with the old root, an equal one takes the new root's value, and the
 outline is dropped, to be supplied by the records or rebuilt from size and radii.
+
+### 10.3 The variable mode decides what a bound field shows, and inside an instance nothing stores it
+
+A layer binds a field to a variable in `variableConsumptionMap` and in the newer
+`parameterConsumptionMap` (which also carries component-property bindings, as `propRefValue`):
+`entries[] { variableField, variableData: { value: { alias } } }`. A paint binds its colour the
+same way, in `colorVar`. Which of the variable's values shows depends on the mode in force:
+`variableModeBySetMap.entries[] { variableSetID, variableModeID }` picks a mode per collection on
+any layer — page, frame, instance — for itself and every layer below it, the nearest pick
+winning. Without one, the collection's default mode applies: the first of its `variableSetModes`
+in `sortPosition` order (a fractional index, compared by code unit). `variableSetID`, like a
+variable's own (§7.4), names the collection by `guid` or by `assetRef` key, so the two spellings
+are matched through the collection node's `key`. An instance stands in for its component's root,
+so the root's own picks do not reach the instance's layers; the instance's record has its own.
+
+Figma writes the bound value beside each binding — the layer's `visible`, the paint's `color` —
+resolved where the layer is defined: a stored layer's in its own place (an instance's own fill
+comes out in the mode the instance picks), a component layer's in the component's modes. An
+instance that picks another mode shows other values, and the file holds them nowhere: derived
+records carry geometry, sizes, transforms and text layout, never `visible` or paints. A component
+stored in "light" and placed in a frame that picks "dark" shows the dark values; a layer that a
+boolean variable hides in a "compact" mode is hidden in every compact instance although the
+component stores it visible — Figma's own layout of such an instance places the other layers as
+if it were absent. A mode picked on an extended collection (`variableSetExtensionID`) takes values
+from the extension's overrides, which this reader does not interpret.
+
+### 10.4 A record's binding map lists only the bindings it changes
+
+`variableConsumptionMap` and `parameterConsumptionMap` in an override record list only the
+bindings that record changes. Restyling a text inside an instance writes an EMPTY
+`variableConsumptionMap` beside the text style, and the layer stays bound — the instance's layout
+still follows the binding — so a reader that replaces the map unbinds every restyled layer. An
+entry that names a field but carries no `variableData` removes that field's binding, and the
+layer's own value applies again. The maps therefore merge per `variableField`, as property
+assignments merge per `defID` (§8.6).

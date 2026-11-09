@@ -18,14 +18,17 @@ Solid fills, linear and radial gradients, image fills in all four scale modes, s
 inside/outside alignment, boolean operations, text (glyph outlines, per-run colours, underline
 and strikethrough, truncation with an ellipsis), component instances with their overrides, their
 component properties (text, visibility, instance swap) and the sizes the enclosing instance gives
-them, colour and effect styles resolved to their live definition, frame clipping, layer opacity,
-the fifteen shared blend modes, drop and inner shadows, layer blur, and all three mask types.
+them, the variable modes an instance picks (a visibility bound to a variable), colour and effect
+styles resolved to their live definition, frame clipping, layer opacity, the fifteen shared blend
+modes, drop and inner shadows, layer blur, and all three mask types.
 
 ## Approximated, and always reported
 
 Background blur (drawn flat — a backdrop filter cannot see behind an isolated subtree),
 `LINEAR_DODGE` and `LINEAR_BURN` (drawn as `screen` and `multiply`), angular and diamond
-gradients (drawn as their average colour), image crop and image rotation.
+gradients (drawn as their average colour), image crop and image rotation, and a variable binding
+inside an instance whose variable is not in the file — a library one — while a mode is picked
+(drawn with the value stored beside it).
 
 ## Skipped, and always reported
 

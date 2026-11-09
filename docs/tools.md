@@ -107,8 +107,8 @@ components / variables / images the file holds.
 `root` (default DOCUMENT), `depth` (default 2, max 6), `types` filter, `format`, `instances`,
 `cursor`. Returns a **flat list in document order**; each entry has `depth` (relative to the
 root) and `parent`, so the hierarchy is reconstructable, plus `children` (a count) so you can
-see where it is worth going deeper. A hidden layer — hidden directly or by a component property
-— is marked `hidden`.
+see where it is worth going deeper. A hidden layer — hidden directly, by a component property,
+or, inside an instance, by a variable read in the mode the instance picks — is marked `hidden`.
 
 Component instances are walked into: their layers come back as the instance shows them, with
 the ids described under [Layers inside component instances](#layers-inside-component-instances).

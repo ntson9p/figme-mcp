@@ -333,6 +333,22 @@ geometry for the swapped instance where it resizes it, as it does for every pain
 `swapAppearance` on the stored record before the record goes on top: a unit equal to the old
 root's takes the new root's value, and the old outline is dropped.
 
+**F28 — Inside an instance, a field bound to a variable takes its value in the instance's mode**
+(2026-11-09; `fig-file-format.md` §10.3, §10.4). A layer binds `VISIBLE` — or a paint's colour,
+F29 — to a variable in `variableConsumptionMap`/`parameterConsumptionMap`, and the value that
+shows depends on the mode in force: the nearest `variableModeBySetMap` pick for the variable's
+collection on the way up, else the collection's first mode. The `visible` a component's layer
+stores beside its binding was resolved in the COMPONENT's modes; an instance that picks another
+mode shows another value, and no derived record carries it. The exporter read only `visible`, so
+a layer a mode hides was drawn. Two parts, both needed: modes are tracked down the traversal (an instance stands in for its
+component's root, whose own picks do not count), and record binding maps merge per field — the
+empty map a restyled text's record writes keeps the binding, where replacing the map lost it even
+for a reader that evaluated it. Only layers inside instances are evaluated; a stored layer's
+value was resolved where it stands. `withModes` and `variableValueIn` (`src/model/variables.ts`)
+and `applyVisibility` (`src/model/bindings.ts`) are shared by the exporter and the scene. A
+binding the file cannot resolve (a library variable) keeps its stored value and, under a picked
+mode, is reported as `variable-unresolved`.
+
 **F15 — Existing APIs to reuse** (do not duplicate): `FileCache.get(file): CacheEntry
 { fig, index }`, `FileIndex.node(guid)`, `FileIndex.subtreeRange(root)`, `TreeNode
 { key, node, children, parent }`, accessors `str/num/bool/obj/arr/objArr/bytes/hex` in
@@ -1476,6 +1492,11 @@ fixtures; check each file's licence before committing it.
 27. **A swapped instance's record describes the old component** (F27). Compare its own
     appearance with the old component's root and drop what is only a copy, or the old icon's
     background is drawn behind the new one.
+28. **A component's layer carries the component's values for its variable bindings** (F28).
+    Inside an instance, read a bound field from the variable in the mode in force at the layer —
+    the instance's picks, never the component root's.
+29. **A record's binding map lists only what it changes** (F28). Merge
+    `variableConsumptionMap`/`parameterConsumptionMap` per field; an empty map changes nothing.
 
 ---
 
@@ -1489,7 +1510,7 @@ fixtures; check each file's licence before committing it.
 `stroke-without-geometry` · `vector-without-geometry` · `geometry:corrupt` ·
 `geometry:synthesised` · `mask-hidden` · `oversize` · `svg-rejected` ·
 `instance-unresolved` · `instance-recursive` · `instance-property` · `instance-swap` ·
-`node-failed`.
+`variable-binding` · `variable-unresolved` · `node-failed`.
 
 The list is frozen in `src/render/report.ts` (`FEATURES` plus `FEATURE_PREFIXES`), and
 `isKnownFeature()` guards it: a golden test renders six subtrees and fails if any reported key

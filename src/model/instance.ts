@@ -138,8 +138,34 @@ function sizeDiffers(a: KiwiObject | undefined, b: KiwiObject | undefined): bool
   );
 }
 
+/** The maps that bind a node's fields to variables and properties (model/bindings.ts). */
+const BINDING_MAPS = new Set(['variableConsumptionMap', 'parameterConsumptionMap']);
+
 /**
- * `{ ...base, ...patch }` minus the addressing fields.
+ * F28 — binding maps merge per bound field. A record lists only the bindings it changes: one
+ * that restyles a text writes an EMPTY `variableConsumptionMap` beside its text style, and its
+ * layer stays bound — Figma's own layout of the instance still follows the binding — so replacing
+ * the map would unbind every field of every restyled layer. An entry that names a field but has
+ * no `variableData` unbinds that field.
+ */
+function mergeBindings(base: unknown, patch: unknown): KiwiObject {
+  const out = new Map<string, KiwiObject>();
+  for (const entry of objArr(base as KiwiObject | undefined, 'entries')) {
+    const field = str(entry, 'variableField');
+    if (field) out.set(field, entry);
+  }
+  for (const entry of objArr(patch as KiwiObject | undefined, 'entries')) {
+    const field = str(entry, 'variableField');
+    if (!field) continue;
+    if (obj(entry, 'variableData')) out.set(field, entry);
+    else out.delete(field);
+  }
+  return { ...(patch as KiwiObject), entries: [...out.values()] };
+}
+
+/**
+ * `{ ...base, ...patch }` minus the addressing fields, with property assignments merged per
+ * definition and binding maps per bound field.
  *
  * Figma re-derives geometry only for nodes that paint something (F20): of the sample's 22 097
  * resized painted nodes, 18 lack it. A record that resizes a node without supplying geometry
@@ -151,7 +177,10 @@ export function mergeNode(base: NodeChange, patch: KiwiObject | undefined): Node
   const out: NodeChange = { ...base };
   for (const [k, v] of Object.entries(patch)) {
     if (OVERRIDE_META.has(k)) continue;
-    out[k] = k === 'componentPropAssignments' ? mergeAssignments(base[k], v) : v;
+    out[k] =
+      k === 'componentPropAssignments' ? mergeAssignments(base[k], v)
+      : BINDING_MAPS.has(k) ? mergeBindings(base[k], v)
+      : v;
   }
   if (sizeDiffers(obj(base, 'size'), obj(patch, 'size'))) {
     if (patch['fillGeometry'] === undefined) delete out['fillGeometry'];
