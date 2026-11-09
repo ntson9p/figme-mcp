@@ -12,7 +12,7 @@ import type { NodeChange } from '../fig/parse.js';
 import type { KiwiObject } from '../fig/kiwi.js';
 import type { FileIndex } from './index.js';
 import { guidKey, breadcrumb, type Guid, type TreeNode } from './tree.js';
-import { resolveOverridePath } from './instance.js';
+import { assignmentValue, propValueOfVariableData, resolveOverridePath } from './instance.js';
 import { bool, colorHex, compact, jsonSafe, num, obj, objArr, r2, str } from './access.js';
 import {
   cornerRadiusOf, effectView, paintBox, paintView, sideWeights, styleRefsOf, textBasics,
@@ -57,12 +57,16 @@ function componentPropValue(idx: FileIndex, value: KiwiObject | undefined): unkn
   return keys.length ? { [keys[0]!]: jsonSafe(value[keys[0]!]) } : undefined;
 }
 
-/** Component-property assignments with the property names resolved. */
+/**
+ * Component-property assignments with the property names resolved. The value is read from
+ * whichever slot holds it (F26); one this view cannot evaluate — a PROP_REF to the enclosing
+ * instance, a variable — is described as the variable data it is.
+ */
 function propAssignmentViews(idx: FileIndex, assignments: readonly KiwiObject[]): Record<string, unknown>[] {
   return assignments.map((a) => {
     const defID = guidKey(obj(a, 'defID') as Guid | undefined) ?? '?';
     const def = idx.propDefs().get(defID);
-    const value = componentPropValue(idx, obj(a, 'value'));
+    const value = componentPropValue(idx, assignmentValue(idx, a));
     return compact({
       defID,
       name: def?.name,
@@ -85,7 +89,11 @@ export function componentView(idx: FileIndex, t: TreeNode): ComponentView {
       return compact({
         name: str(d, 'name') ?? resolved?.name,
         type: str(d, 'type') ?? resolved?.type,
-        default: componentPropValue(idx, obj(d, 'initialValue')),
+        // An INSTANCE_SWAP default may exist only as variable data (F26).
+        default: componentPropValue(
+          idx,
+          obj(d, 'initialValue') ?? propValueOfVariableData(idx, obj(d, 'varValue')),
+        ),
       });
     })
     .filter((d) => d.name !== undefined);

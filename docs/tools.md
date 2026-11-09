@@ -259,6 +259,9 @@ most-used first, so the load-bearing parts of the design system come back first.
                   { "name": "icon", "type": "INSTANCE_SWAP" } ] } ] }
 ```
 
+An INSTANCE_SWAP default comes back as the component it names, `{ "guid": …, "name": … }` —
+also when the file keeps it only as variable data, as current files do.
+
 ### 8. `fig_instance` — how an instance differs from its component
 
 ```jsonc
@@ -273,6 +276,8 @@ most-used first, so the load-bearing parts of the design system come back first.
 
 An instance that sets component properties reports them with the names resolved, e.g.
 `propAssignments: [ { "defID": "108:1543", "name": "text", "type": "TEXT", "value": "Back" } ]`.
+A swap comes back as the component it picks, `{ "guid": …, "name": … }`, whichever of the two
+slots (`value` or `varValue`) the file stored it in.
 A path segment is the target's `overrideKey` when it has one and its guid otherwise, and a
 nested path is walked through swapped instances exactly as the renderer expands them.
 

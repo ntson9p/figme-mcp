@@ -44,6 +44,7 @@ export class FileIndex {
   private searchIndex: SearchEntry[] | undefined;
   private overrideIdentityIndex: Map<string, TreeNode[]> | undefined;
   private propDefIndex: Map<string, PropDefEntry> | undefined;
+  private componentKeyIndex: Map<string, TreeNode> | undefined;
 
   constructor(fig: ParsedFig) {
     this.fig = fig;
@@ -127,6 +128,24 @@ export class FileIndex {
   resolveAssetRef(ref: KiwiObject | undefined): TreeNode | undefined {
     const key = assetRefKey(ref);
     return key ? this.byAssetKey.get(key) : undefined;
+  }
+
+  /**
+   * A component (SYMBOL) by its publish key — `componentKey`, else `key` — for a reference that
+   * names a component by `assetRef` instead of by guid (F26). Only components present in this
+   * file resolve. Built on first use.
+   */
+  componentByKey(key: string): TreeNode | undefined {
+    if (!this.componentKeyIndex) {
+      const map = new Map<string, TreeNode>();
+      for (const t of this.symbols) {
+        for (const k of [str(t.node, 'componentKey'), str(t.node, 'key')]) {
+          if (k && !map.has(k)) map.set(k, t);
+        }
+      }
+      this.componentKeyIndex = map;
+    }
+    return this.componentKeyIndex.get(key);
   }
 
   /** DFS pre-order slice of a subtree, so pagination and cursors are stable. */

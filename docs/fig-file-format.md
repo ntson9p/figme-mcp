@@ -372,6 +372,7 @@ partial, so assignments must be merged per `defID`. A text assignment normally c
 derived record holding the new glyphs (11 907 of 12 584 direct bindings; the rest are nested
 and served by the enclosing instance). A swap names the symbol by `guidValue`, or in a record by
 `overriddenSymbolID` (1 677 records); 2 027 of the 2 029 swap targets are local symbols.
+(Amended 2026-11-09: `value` is not the only slot an assignment keeps its value in — see §10.1.)
 
 ### 8.7 A style reference is live; the paints cached beside it are not
 
@@ -458,3 +459,32 @@ carry one carry this value. No record path segment ever equals it; 31 segments a
 layers by their guid. It therefore means "no key", and the layer's identity is its guid — read
 literally, all such layers of a component would share one identity and none of their records
 would apply.
+
+## 10. Addendum — component properties and variables in current files (2026-11-09)
+
+Format details that files saved by a current Figma rely on and that the sections above do not
+cover. Unlike §§7–9 they come without file-wide counts; each is pinned by a synthetic unit test.
+
+### 10.1 A property value may be kept only as variable data
+
+The schema gives `ComponentPropAssignment` two value slots: `value`, a `ComponentPropValue`, and
+`varValue`, a `VariableData` whose `value` is a `VariableAnyValue`. Older files fill both with
+the same value. Current ones write some assignments — every kind of property, INSTANCE_SWAP most
+visibly — with `varValue` alone, and the value names differ between the two shapes:
+
+| property | `value` (`ComponentPropValue`) | `varValue.value` (`VariableAnyValue`) |
+|---|---|---|
+| BOOL | `boolValue` | `boolValue` |
+| TEXT | `textValue` (a `TextData`) | `textDataValue` (a `TextData`; its `textValue` is a plain string) |
+| INSTANCE_SWAP | `guidValue` | `symbolIdValue { guid \| assetRef }` |
+
+`varValue` may instead hold a `propRefValue` (a property of the enclosing instance, §8.6) or an
+`alias` to a variable, and then carries no value of its own. A reader that looks only at `value`
+takes such an assignment for no assignment at all, and the component's default shows through:
+the default icon instead of the chosen one, the default text, a layer the property switches off
+left on. Figma applies them — the `derivedSymbolData` of such an instance addresses the layers
+of the swapped-in component, not those of the default one. A property definition can keep its
+default the same way: an INSTANCE_SWAP definition has no `initialValue`, only `varValue`. A
+`symbolIdValue` with an `assetRef` instead of a `guid` is matched against the publish key of a
+local component (`componentKey`, else `key`); one from a library that is not in the file stays
+unresolved.

@@ -21,21 +21,28 @@
  * an instance gives the component's properties. A symbol descendant bound to a property through
  * `componentPropRefs` takes its `visible`, its text or its symbol from the assignment. Not one of
  * the sample's 29 877 BOOLEAN=false assignments is mirrored by a `visible:false` record, so the
- * assignments have to be evaluated, not read back.
+ * assignments have to be evaluated, not read back. An assignment keeps its value in `value` or,
+ * in files from current Figma, only in `varValue` (F26) — `assignmentValue` reads both.
  */
 import type { KiwiObject } from '../fig/kiwi.js';
 import type { NodeChange } from '../fig/parse.js';
 import type { FileIndex } from './index.js';
 import { guidKey, overrideIdentity, type Guid, type TreeNode } from './tree.js';
-import { bool, num, obj, objArr, str } from './access.js';
+import { assetRefKey, bool, num, obj, objArr, str } from './access.js';
 
 /** Addressing fields that must never be merged into a node as content. */
 const OVERRIDE_META = new Set(['guidPath', 'overrideLevel', 'guid', 'phase', 'parentIndex']);
 
 /** Record map for one instance level: identity path (joined by '/') → partial NodeChange. */
 export type OverrideRecords = ReadonlyMap<string, KiwiObject>;
-/** Component-property assignments of one instance: defID → `{textValue|boolValue|guidValue}`. */
+/**
+ * Component-property assignments of one instance: defID → the value in `ComponentPropValue`
+ * shape, `{textValue|boolValue|guidValue}`, whichever slot the file stored it in.
+ */
 export type PropAssignments = ReadonlyMap<string, KiwiObject>;
+
+/** The index lookups the instance resolver needs. */
+type ResolverIndex = Pick<FileIndex, 'node' | 'componentByKey'>;
 
 export interface ResolvedInstance {
   readonly symbol: TreeNode;
@@ -52,6 +59,57 @@ function pathOf(record: KiwiObject): string | undefined {
 
 function defIdOf(assignment: KiwiObject): string | undefined {
   return guidKey(obj(assignment, 'defID') as Guid | undefined);
+}
+
+/**
+ * A component property's value held as `VariableData` — the `varValue` of an assignment or of a
+ * property definition — in the `ComponentPropValue` shape the rest of the resolver reads, or
+ * undefined when it holds nothing this file can turn into one (F26).
+ *
+ * The names differ between the two shapes: a swap is `symbolIdValue { guid | assetRef }`, not
+ * `guidValue`, and text is `textDataValue`, because a `VariableAnyValue`'s `textValue` is a plain
+ * string. A `propRefValue` (a property of the enclosing instance) or an `alias` (a variable)
+ * carries no value of its own and is left to the caller.
+ */
+export function propValueOfVariableData(
+  index: Pick<FileIndex, 'componentByKey'>,
+  data: KiwiObject | undefined,
+): KiwiObject | undefined {
+  const value = obj(data, 'value');
+  if (!value) return undefined;
+  const flag = bool(value, 'boolValue');
+  if (flag !== undefined) return { boolValue: flag };
+  const text = obj(value, 'textDataValue');
+  if (text) return { textValue: text };
+  const symbol = obj(value, 'symbolIdValue');
+  if (symbol) {
+    const byGuid = obj(symbol, 'guid');
+    if (guidKey(byGuid as Guid | undefined)) return { guidValue: byGuid };
+    const key = assetRefKey(symbol);
+    const local = key ? index.componentByKey(key) : undefined;
+    const guid = local ? obj(local.node, 'guid') : undefined;
+    if (guid) return { guidValue: guid };
+  }
+  return undefined;
+}
+
+/**
+ * The value one assignment gives its property, in `ComponentPropValue` shape: the `value` slot
+ * when the file wrote it, else what `varValue` holds — a value of its own (F26), or a PROP_REF to
+ * a property of the enclosing instance, looked up in `outerProps`. Undefined when the assignment
+ * carries nothing usable, and the component's own default then stands.
+ */
+export function assignmentValue(
+  index: ResolverIndex,
+  assignment: KiwiObject,
+  outerProps?: PropAssignments,
+): KiwiObject | undefined {
+  const value = obj(assignment, 'value');
+  if (value && Object.keys(value).length > 0) return value;
+  const varValue = obj(assignment, 'varValue');
+  const ref = guidKey(obj(obj(obj(varValue, 'value'), 'propRefValue'), 'defId') as Guid | undefined);
+  if (ref) return outerProps?.get(ref);
+  return propValueOfVariableData(index, varValue);
 }
 
 /**
@@ -123,7 +181,7 @@ function collect(target: Map<string, KiwiObject>, records: readonly KiwiObject[]
  * none in the sample, so this path is untested against real data).
  */
 export function resolveInstance(
-  index: FileIndex,
+  index: ResolverIndex,
   node: NodeChange,
   inherited?: OverrideRecords,
   outerProps?: PropAssignments,
@@ -151,8 +209,7 @@ export function resolveInstance(
   for (const a of objArr(node, 'componentPropAssignments')) {
     const id = defIdOf(a);
     if (!id) continue;
-    const ref = obj(obj(obj(obj(a, 'varValue'), 'value'), 'propRefValue'), 'defId');
-    const value = obj(a, 'value') ?? (ref ? outerProps?.get(guidKey(ref as Guid) ?? '') : undefined);
+    const value = assignmentValue(index, a, outerProps);
     if (value) props.set(id, value);
   }
   return { symbol, records, props };

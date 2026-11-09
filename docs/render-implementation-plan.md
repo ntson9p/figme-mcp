@@ -233,7 +233,8 @@ nested and served by the enclosing instance's records); without one the node is 
 `text-property-without-outlines` rather than drawn with the symbol's glyphs. A swap names the
 symbol by `guidValue` (2 027 of 2 029 are local) or, in a record, by `overriddenSymbolID`
 (1 677). No PROP_REF chains occur in the sample. Implemented in `src/model/instance.ts`,
-shared by the exporter and `fig_instance`.
+shared by the exporter and `fig_instance`. (Current files may keep the value in `varValue`
+instead of `value`: F26.)
 
 **F19 — A referenced style is the live source of its paints.** `styleIdForFill`,
 `styleIdForStrokeFill` and `styleIdForEffect` appear on nodes, on override records and on
@@ -305,6 +306,20 @@ one side set, `strokeGeometry` lies along that edge alone. The exporter draws `s
 and needs none of this; the inspection tools report the sides as `strokeWeights`. Conversely,
 `strokeWeight` is written on nearly every node — 5 842 of this file's nodes have one and no
 stroke at all — so it is reported only beside a stroke that shows.
+
+**F26 — A component-property value may be kept only as variable data** (2026-11-09; format
+details in `fig-file-format.md` §10.1). An assignment has two value slots, `value` (a
+`ComponentPropValue`) and `varValue` (a `VariableData`), and current files write some
+assignments — INSTANCE_SWAP ones above all — with `varValue` alone. Read only `value` and each of
+them is silently missing: the component's default icon is drawn instead of the chosen one, its
+default text kept, a layer a BOOLEAN switches off left on, and nothing in the report says so.
+The names differ between the slots — a swap is `symbolIdValue { guid | assetRef }`, not
+`guidValue`, and text is `textDataValue`, because `VariableAnyValue.textValue` is a plain string.
+Figma applies these assignments: the derived records of such an instance address the layers of
+the swapped-in component. `assignmentValue` in `src/model/instance.ts` reads `value` first, then
+`varValue` (a PROP_REF included), for the exporter, the scene and `fig_instance` alike, and
+`fig_components` reads an INSTANCE_SWAP definition's default, which only `varValue` holds, the
+same way.
 
 **F15 — Existing APIs to reuse** (do not duplicate): `FileCache.get(file): CacheEntry
 { fig, index }`, `FileIndex.node(guid)`, `FileIndex.subtreeRange(root)`, `TreeNode
@@ -1443,6 +1458,9 @@ fixtures; check each file's licence before committing it.
 25. **`truncationStartIndex` counts glyphs, and glyph `styleID` is a decoy** (F21). Cut the
     glyph array at that index (the ellipsis is the glyph before it), and take the run style
     from `characterStyleIDs[firstCharacter]`.
+26. **A property value can live in `varValue` alone** (F26). Read `value`, then `varValue`,
+    translating `symbolIdValue` and `textDataValue`; otherwise every icon chosen through an
+    INSTANCE_SWAP property reverts to the component's default, and nothing reports it.
 
 ---
 
