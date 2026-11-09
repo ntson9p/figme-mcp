@@ -321,6 +321,18 @@ the swapped-in component. `assignmentValue` in `src/model/instance.ts` reads `va
 `fig_components` reads an INSTANCE_SWAP definition's default, which only `varValue` holds, the
 same way.
 
+**F27 — A swapped nested instance keeps only its overrides** (2026-11-09; `fig-file-format.md`
+§10.2). The stored record of a nested instance repeats its component root's own appearance —
+fill, stroke, corners, effects, opacity, clip — because an instance's record is complete (F17).
+Swapped by a record or an INSTANCE_SWAP property, it shows the new component's root, but the
+exporter took the instance's fields as already resolved for it: an icon whose root is a filled
+circle left that circle, round corners and all, behind the icon swapped in for it, synthesised
+from size and radius since the record carries no outline. Figma paints no such circle — it derives no
+geometry for the swapped instance where it resizes it, as it does for every painted node (F20).
+`showLayer` in `src/model/instance.ts`, shared by the exporter and the scene, runs
+`swapAppearance` on the stored record before the record goes on top: a unit equal to the old
+root's takes the new root's value, and the old outline is dropped.
+
 **F15 — Existing APIs to reuse** (do not duplicate): `FileCache.get(file): CacheEntry
 { fig, index }`, `FileIndex.node(guid)`, `FileIndex.subtreeRange(root)`, `TreeNode
 { key, node, children, parent }`, accessors `str/num/bool/obj/arr/objArr/bytes/hex` in
@@ -1461,6 +1473,9 @@ fixtures; check each file's licence before committing it.
 26. **A property value can live in `varValue` alone** (F26). Read `value`, then `varValue`,
     translating `symbolIdValue` and `textDataValue`; otherwise every icon chosen through an
     INSTANCE_SWAP property reverts to the component's default, and nothing reports it.
+27. **A swapped instance's record describes the old component** (F27). Compare its own
+    appearance with the old component's root and drop what is only a copy, or the old icon's
+    background is drawn behind the new one.
 
 ---
 

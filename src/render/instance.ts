@@ -14,10 +14,13 @@ export {
   descend,
   mergeNode,
   resolveInstance,
+  showLayer,
+  swapAppearance,
   type AppliedProps,
   type OverrideRecords,
   type PropAssignments,
   type ResolvedInstance,
+  type ShownLayer,
 } from '../model/instance.js';
 
 /**

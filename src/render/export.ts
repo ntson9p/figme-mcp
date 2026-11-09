@@ -16,11 +16,10 @@ import { overrideIdentity, type TreeNode } from '../model/tree.js';
 import { bool, bytes, num, obj, objArr, str } from '../model/access.js';
 import { BoundsCache, effectMargins } from './bounds.js';
 import {
-  applyProps,
   descend,
   instanceShapeNode,
-  mergeNode,
   resolveInstance,
+  showLayer,
   type OverrideRecords,
   type PropAssignments,
 } from './instance.js';
@@ -200,21 +199,18 @@ class Exporter {
 
   /**
    * The node as this instance sees it: the tree node merged with the active overrides and with
-   * the enclosing instance's property assignments applied (F17, F18), then with every colour or
+   * the enclosing instance's property assignments applied (F17, F18) — a nested instance whose
+   * component that swaps losing the old component's appearance (F27) — then with every colour or
    * effect style it references resolved to that style's live value (F19).
    */
   private effective(t: TreeNode): NodeChange {
     let node = t.node;
     let staleOutlines = false;
     if (this.frame) {
-      const record = this.frame.get(overrideIdentity(t));
-      node = mergeNode(node, record);
-      const applied = applyProps(node, this.props, record?.['derivedTextData'] !== undefined);
-      if (applied.node !== node) {
-        this.report.seen('instance-property');
-        node = applied.node;
-        staleOutlines = applied.staleOutlines;
-      }
+      const shown = showLayer(this.entry.index, t, this.frame, this.props);
+      if (shown.propsApplied) this.report.seen('instance-property');
+      node = shown.node;
+      staleOutlines = shown.staleOutlines;
     }
     const live = applyStyles(this.entry.index, node);
     // Marked on the node `emitText` is handed: resolving a style above returns a new record.

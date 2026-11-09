@@ -488,3 +488,18 @@ default the same way: an INSTANCE_SWAP definition has no `initialValue`, only `v
 `symbolIdValue` with an `assetRef` instead of a `guid` is matched against the publish key of a
 local component (`componentKey`, else `key`); one from a library that is not in the file stays
 unresolved.
+
+### 10.2 A swapped nested instance keeps only what it overrides
+
+The record of an instance nested in a component is complete for the component it points at
+(§8.5): besides its overrides it repeats that component root's own appearance — paints, stroke,
+corners, effects, opacity, clipping. When a record (`overriddenSymbolID`) or an INSTANCE_SWAP
+property swaps the component, those repeated values belong to the OLD component, and Figma
+draws the new component's root, keeping only what the instance overrides. An icon whose root
+is a filled circle, swapped for one whose root paints nothing, keeps no circle:
+Figma derives no `fillGeometry` for the swapped instance even where the enclosing instance
+resizes it, as it would for a node that paints (§8.8). The stored outline (`fillGeometry`,
+`strokeGeometry`) traces the old component's shape too. So each unit of the instance's own
+appearance — paints with their style reference, the stroke-weight group and the corner group
+taken whole — is compared with the old root, an equal one takes the new root's value, and the
+outline is dropped, to be supplied by the records or rebuilt from size and radii.

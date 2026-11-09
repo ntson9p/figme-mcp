@@ -14,25 +14,22 @@
  * unchanged. A stored node keeps its guid and its record. A sublayer carries the record as its
  * instances show it — the symbol descendant merged with the override records and with the
  * component-property values applied — exactly as the renderer sees it, through the same
- * `model/instance.ts` resolution. Children are expanded lazily, on first access.
+ * `model/instance.ts` resolution (`showLayer`). Children are expanded lazily, on first access.
  *
  * Only an instance's CHILDREN come from its symbol. Its own record is complete: a field it omits
  * is at its default. On the iOS 16 UI Kit, of every visual or layout field an instance record
  * omits while its symbol's root sets it, the root's value is the default as well (an empty
  * paint list, a zero radius), or a style reference with nothing in it — never a value the
- * instance would show — so nothing is filled in from the symbol.
+ * instance would show — so nothing is filled in from the symbol. The exception is a nested
+ * instance whose component a record or a property swaps: its record was complete for the OLD
+ * component, so what it merely copied from that component's root gives way to the new root's
+ * (F27).
  */
 import type { NodeChange } from '../fig/parse.js';
 import type { KiwiObject } from '../fig/kiwi.js';
 import type { FileIndex } from './index.js';
 import { guidKey, overrideIdentity, type Guid, type TreeNode } from './tree.js';
-import {
-  applyProps,
-  descend,
-  mergeNode,
-  resolveInstance,
-  type ResolvedInstance,
-} from './instance.js';
+import { descend, resolveInstance, showLayer, type ResolvedInstance } from './instance.js';
 import { obj, objArr, str } from './access.js';
 
 /** Instances nested deeper than this are almost certainly a cycle in a damaged file. */
@@ -161,16 +158,10 @@ class Layer implements SceneNode {
 
 /** A symbol descendant as the instance expanded at `level` shows it. */
 function sublayer(index: FileIndex, c: TreeNode, level: Level, parent: SceneNode): SceneNode {
-  const identity = overrideIdentity(c);
-  const record = level.instance.records.get(identity);
-  const node = applyProps(
-    mergeNode(c.node, record),
-    level.instance.props,
-    record?.['derivedTextData'] !== undefined,
-  ).node;
+  const { records, props } = level.instance;
   return new Layer(index, {
-    key: `I${level.root};${[...level.path, identity].join(';')}`,
-    node,
+    key: `I${level.root};${[...level.path, overrideIdentity(c)].join(';')}`,
+    node: showLayer(index, c, records, props).node,
     source: c,
     level,
     parent,

@@ -285,6 +285,116 @@ export function applyProps(
 }
 
 /**
+ * The fields of an instance's own box that come from its component's root unless the instance
+ * overrides them, in the units Figma writes together: paints with their style reference, the
+ * stroke-weight group, the corner group (F27).
+ */
+const ROOT_APPEARANCE: readonly (readonly string[])[] = [
+  ['fillPaints', 'styleIdForFill'],
+  ['strokePaints', 'styleIdForStrokeFill'],
+  ['strokeWeight', 'borderStrokeWeightsIndependent', 'borderTopWeight', 'borderRightWeight',
+    'borderBottomWeight', 'borderLeftWeight'],
+  ['strokeAlign'],
+  ['strokeJoin'],
+  ['strokeCap'],
+  ['dashPattern'],
+  ['effects', 'styleIdForEffect'],
+  ['cornerRadius', 'rectangleCornerRadiiIndependent', 'rectangleTopLeftCornerRadius',
+    'rectangleTopRightCornerRadius', 'rectangleBottomRightCornerRadius', 'rectangleBottomLeftCornerRadius'],
+  ['cornerSmoothing'],
+  ['opacity'],
+  ['blendMode'],
+  ['frameMaskDisabled'],
+];
+
+/** Structural equality of two decoded values: primitives, bytes, arrays and records. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a instanceof Uint8Array || b instanceof Uint8Array) {
+    return a instanceof Uint8Array && b instanceof Uint8Array &&
+      a.length === b.length && a.every((v, i) => v === b[i]);
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) &&
+      a.length === b.length && a.every((v, i) => sameValue(v, b[i]));
+  }
+  if (a && b && typeof a === 'object' && typeof b === 'object') {
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    return ka.length === kb.length &&
+      ka.every((k) => Object.hasOwn(b, k) && sameValue((a as KiwiObject)[k], (b as KiwiObject)[k]));
+  }
+  return false;
+}
+
+/** The component an INSTANCE record shows: its swap target, else its own symbol. */
+function componentOf(node: NodeChange): string | undefined {
+  return (
+    guidKey(obj(node, 'overriddenSymbolID') as Guid | undefined) ??
+    guidKey(obj(obj(node, 'symbolData'), 'symbolID') as Guid | undefined)
+  );
+}
+
+/**
+ * F27 — the stored record of a nested instance whose component is swapped, as the swapped-in
+ * component shows it. The record is complete for the component it was written for, so it holds
+ * copies of that component root's own appearance — an icon's filled circle and round corners —
+ * that are not overrides. Swapped, the instance keeps only what it overrides: every unit of
+ * `ROOT_APPEARANCE` equal to the old root's takes the new root's value (or none, where the new
+ * root has none), and the outline, which traced the old component's shape, is dropped.
+ */
+export function swapAppearance(stored: NodeChange, from: NodeChange, to: NodeChange): NodeChange {
+  const out: NodeChange = { ...stored };
+  delete out['fillGeometry'];
+  delete out['strokeGeometry'];
+  for (const unit of ROOT_APPEARANCE) {
+    if (!unit.every((field) => sameValue(stored[field], from[field]))) continue;
+    for (const field of unit) {
+      if (to[field] === undefined) delete out[field];
+      else out[field] = to[field];
+    }
+  }
+  return out;
+}
+
+export interface ShownLayer extends AppliedProps {
+  /** True when a property value changed the layer. */
+  readonly propsApplied: boolean;
+}
+
+/**
+ * A component layer as the instance that expands it shows it: the stored node merged with its
+ * record, with the instance's property values applied (F17, F18) — and, for a nested instance
+ * whose component that swaps, with the copies of the old component's root appearance taken out
+ * before the record goes on top (F27). Shared by the exporter and the scene, so the picture and
+ * the inspection tools see the same layer.
+ */
+export function showLayer(
+  index: Pick<FileIndex, 'node'>,
+  t: TreeNode,
+  records: OverrideRecords,
+  props: PropAssignments,
+): ShownLayer {
+  const record = records.get(overrideIdentity(t));
+  const outlines = record?.['derivedTextData'] !== undefined;
+  const merged = mergeNode(t.node, record);
+  const applied = applyProps(merged, props, outlines);
+  if (str(t.node, 'type') === 'INSTANCE') {
+    const from = componentOf(t.node);
+    const to = componentOf(applied.node);
+    const old = from && to && from !== to ? index.node(from) : undefined;
+    const swapped = old && to ? index.node(to) : undefined;
+    if (old && swapped) {
+      // A component missing from the file (a library one) cannot be compared; nothing changes.
+      const cleaned = mergeNode(swapAppearance(t.node, old.node, swapped.node), record);
+      const reapplied = applyProps(cleaned, props, outlines);
+      return { ...reapplied, propsApplied: reapplied.node !== cleaned };
+    }
+  }
+  return { ...applied, propsApplied: applied.node !== merged };
+}
+
+/**
  * The node a record path addresses, walked exactly the way the renderer expands the instance:
  * each segment names a node inside the current symbol by identity, and a segment that lands on a
  * nested INSTANCE continues inside the symbol that nested instance resolves to — after the
