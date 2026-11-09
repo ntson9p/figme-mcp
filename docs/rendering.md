@@ -18,8 +18,8 @@ Solid fills, linear and radial gradients, image fills in all four scale modes, s
 inside/outside alignment, boolean operations, text (glyph outlines, per-run colours, underline
 and strikethrough, truncation with an ellipsis), component instances with their overrides, their
 component properties (text, visibility, instance swap) and the sizes the enclosing instance gives
-them, the variable modes an instance picks (a visibility bound to a variable), colour and effect
-styles resolved to their live definition, frame clipping, layer opacity, the fifteen shared blend
+them, the variable modes an instance picks (visibility and colours bound to variables), colour
+and effect styles resolved to their live definition, frame clipping, layer opacity, the fifteen shared blend
 modes, drop and inner shadows, layer blur, and all three mask types.
 
 ## Approximated, and always reported

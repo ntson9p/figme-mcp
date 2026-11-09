@@ -11,8 +11,7 @@ import type { NodeChange } from '../fig/parse.js';
 import type { FileIndex } from './index.js';
 import type { TreeNode } from './tree.js';
 import { compact, num, obj, objArr, str } from './access.js';
-import { typography } from './summarize.js';
-import { applyStyles } from './styles.js';
+import { shownStyle, typography } from './summarize.js';
 
 export interface TextRun {
   /** UTF-16 code-unit offsets: `characters.slice(start, end)`. */
@@ -63,11 +62,12 @@ export function textView(idx: FileIndex, t: TreeNode, includeRuns: boolean): Tex
   const ids = (textData?.['characterStyleIDs'] as number[] | undefined) ?? [];
   const hasStyledRuns = ids.some((id) => id !== 0);
   // The typography Figma lays the text out with: a referenced style wins over the cached copy
-  // (F19, F22), for the node and for each run's override entry alike.
+  // (F19, F22), and inside an instance a bound colour takes the instance's mode (F29) — for the
+  // node and for each run's override entry alike.
   const view: TextView = {
     characters,
     characterCount: characters.length,
-    baseStyle: orUndefined(typography(idx, applyStyles(idx, t.node, { text: true }))),
+    baseStyle: orUndefined(typography(idx, shownStyle(idx, t))),
     hasStyledRuns,
   };
   if (!includeRuns) return view;
@@ -92,7 +92,7 @@ export function textView(idx: FileIndex, t: TreeNode, includeRuns: boolean): Tex
         text: characters.slice(start, i),
         styleID,
         style: override
-          ? orUndefined(typography(idx, applyStyles(idx, override, { text: true, partial: true })))
+          ? orUndefined(typography(idx, shownStyle(idx, t, override, { text: true, partial: true })))
           : undefined,
       }) as TextRun,
     );

@@ -538,3 +538,14 @@ still follows the binding — so a reader that replaces the map unbinds every re
 entry that names a field but carries no `variableData` removes that field's binding, and the
 layer's own value applies again. The maps therefore merge per `variableField`, as property
 assignments merge per `defID` (§8.6).
+
+### 10.5 A colour bound to a variable is stored in the component's mode too
+
+A SOLID paint, a gradient stop and an effect bind their colour to a variable in `colorVar` (a
+`VariableData` whose value is an `alias`), and the `color` beside it is the variable's value
+where the layer is defined (§10.3): for a component's layer, in the component's modes, whatever
+mode an instance of it picks. A colour style's own paint can be bound the same way, so a layer
+that references the style shows the style's variable in the layer's mode; text runs and vector
+regions name their paints, or a style, in `styleOverrideTable` entries that bind alike. The
+variable's colour carries its own alpha. A paint's `opacity` is a separate field, with a binding
+of its own (`opacityVar`), and not part of the colour.

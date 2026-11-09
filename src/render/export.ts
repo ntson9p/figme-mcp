@@ -24,7 +24,7 @@ import {
   type OverrideRecords,
   type PropAssignments,
 } from './instance.js';
-import { applyVisibility } from '../model/bindings.js';
+import { applyBindings, applyColours, boundPaints, type BoundNode } from '../model/bindings.js';
 import { NO_MODES, withModes, type ModeMap } from '../model/variables.js';
 import { applyStyles, runPaints } from './style.js';
 import { expandBox, fromFigma, isIdentity, transformBox, unionBox, type Box } from './matrix.js';
@@ -219,7 +219,8 @@ class Exporter {
    * the enclosing instance's property assignments applied (F17, F18) — a nested instance whose
    * component that swaps losing the old component's appearance (F27) — then with every colour or
    * effect style it references resolved to that style's live value (F19), and, inside an
-   * instance, its variable bindings read in the modes in force (F28).
+   * instance, its visibility and colours bound to variables read in the modes in force (F28,
+   * F29).
    */
   private effective(t: TreeNode): NodeChange {
     let node = t.node;
@@ -239,10 +240,15 @@ class Exporter {
     return live;
   }
 
-  /** F28 — the layer's bound fields, read in the variable modes in force at it. */
+  /** F28, F29 — the layer's visibility and colours, read in the variable modes in force at it. */
   private bindVariables(t: TreeNode, node: NodeChange): NodeChange {
     const modes = this.modesAt(t, node);
-    const bound = applyVisibility(this.entry.index, node, modes);
+    const bound = applyBindings(this.entry.index, node, modes);
+    this.noteBindings(t, bound, modes);
+    return bound.node;
+  }
+
+  private noteBindings(t: TreeNode, bound: BoundNode, modes: ModeMap): void {
     if (bound.applied > 0) this.report.seen('variable-binding');
     // Only a mode picked somewhere can make the cached value the wrong one.
     if (bound.unresolved > 0 && modes.size > 0) {
@@ -252,7 +258,16 @@ class Exporter {
         this.report.approximated('variable-unresolved', t.key);
       }
     }
-    return bound.node;
+  }
+
+  /**
+   * Inside an instance, the paints a text run or vector region picks at draw time — a style an
+   * entry names — read in the modes in force at the layer (F29); outside one, as stored.
+   */
+  private runBinder(t: TreeNode, node: NodeChange): ((paints: KiwiObject[]) => KiwiObject[]) | undefined {
+    if (!this.frame) return undefined;
+    const modes = this.modesAt(t, node);
+    return (paints) => boundPaints(this.entry.index, paints, modes);
   }
 
   /** The variable modes in force at `t`, shown as `node`: its own picks over those above it. */
@@ -511,6 +526,7 @@ class Exporter {
 
     // The modes in force at the instance, read in its own context before entering it (F28).
     const modes = this.modesAt(t, node);
+    const nested = this.frame !== undefined;
     const savedFrame = this.frame;
     const savedProps = this.props;
     const savedScope = this.defScope;
@@ -525,10 +541,13 @@ class Exporter {
     try {
       // The instance's own box: the symbol root with its override applied, overlaid by whatever
       // the instance itself (as seen in its context) already carries resolved.
-      const shape = applyStyles(
+      let shape = applyStyles(
         this.entry.index,
         instanceShapeNode(node, resolved.symbol, resolved.records),
       );
+      // A nested instance's own colours were read in its context by `effective`, but a style
+      // resolved again just above hands back the style's paints as stored (F29).
+      if (nested) shape = applyColours(this.entry.index, shape, modes).node;
       this.emitOwnContent(t, shape, 'container', resolved.symbol.children);
     } finally {
       this.activeSymbols.delete(resolved.symbol.key);
@@ -554,6 +573,7 @@ class Exporter {
     }
     const box = Exporter.box(node);
     const paintField = field === 'fillGeometry' ? 'fillPaints' : 'strokePaints';
+    const bind = this.runBinder(t, node);
 
     for (const path of geometry) {
       const raw = this.blob(num(path, 'commandsBlob'));
@@ -569,7 +589,7 @@ class Exporter {
       }
       // SVG's default fill-rule is nonzero, so it is only written when the winding is ODD.
       const rule = str(path, 'windingRule') === 'ODD' ? 'evenodd' : undefined;
-      const styled = runPaints(this.entry.index, node, num(path, 'styleID'), paintField);
+      const styled = runPaints(this.entry.index, node, num(path, 'styleID'), paintField, bind);
       for (const paint of styled ?? paints) {
         const attrs = paintAttrs(paint, box, this.env, t.key);
         if (!attrs) continue;
@@ -738,8 +758,9 @@ class Exporter {
 
     const box = Exporter.box(node);
     const own = objArr(node, 'fillPaints');
+    const bind = this.runBinder(t, node);
     const paintsFor = (styleID: number): readonly KiwiObject[] =>
-      runPaints(this.entry.index, node, styleID, 'fillPaints') ?? own;
+      runPaints(this.entry.index, node, styleID, 'fillPaints', bind) ?? own;
 
     for (const run of draw.glyphs) {
       for (const paint of paintsFor(run.styleID)) {

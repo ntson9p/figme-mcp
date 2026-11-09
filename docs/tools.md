@@ -223,6 +223,11 @@ value, the one Figma draws and lays the text out with — not the copy cached on
 the reference, which can be stale. `fig_node`, `fig_text` and `fig_instance` report the same live
 values, and name the style whether it was published (`assetRef`) or not (`guid`).
 
+Inside a component instance, a colour bound to a variable (`colorVar`) is likewise reported in
+the variable mode in force there — the one Figma draws: a layer of an instance that picks "dark"
+reports the dark value, although its component stores its own. `colorVar.values` still lists the
+value of every mode.
+
 A frame with Figma's "Auto" spacing comes back as `justifyContent: "space-between"` with no
 `gap`: Figma ignores the stored gap there, and as a CSS `gap` it would become a minimum that
 overflows a narrower box. `rowGap` appears only on a layout that wraps.

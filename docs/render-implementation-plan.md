@@ -349,6 +349,18 @@ and `applyVisibility` (`src/model/bindings.ts`) are shared by the exporter and t
 binding the file cannot resolve (a library variable) keeps its stored value and, under a picked
 mode, is reported as `variable-unresolved`.
 
+**F29 — Inside an instance, a colour bound to a variable is drawn in the instance's mode**
+(2026-11-09; `fig-file-format.md` §10.5). The `color` stored beside a `colorVar` on a component's
+layer is the value in the component's modes, and the exporter drew it in every instance: a
+component stored light kept its light colours in an instance that picks "dark". `applyColours`
+(`src/model/bindings.ts`) reads paints, gradient stops, effects and the paints of text-run and
+vector-region entries in the modes in force — after colour styles are resolved, since a style's
+paint can be bound too — and the paints a run or region picks at draw time go through the same
+step (`runPaints`'s `bind`). A nested instance's own box is read again after `applyStyles` hands
+back the style's paint as stored. `fig_node`, `fig_style` and `fig_text` report the same colours
+through `shownStyle` (`src/model/summarize.ts`). A paint's `opacity` is left alone: it is a
+separate field, with its own binding.
+
 **F15 — Existing APIs to reuse** (do not duplicate): `FileCache.get(file): CacheEntry
 { fig, index }`, `FileIndex.node(guid)`, `FileIndex.subtreeRange(root)`, `TreeNode
 { key, node, children, parent }`, accessors `str/num/bool/obj/arr/objArr/bytes/hex` in
@@ -1497,6 +1509,9 @@ fixtures; check each file's licence before committing it.
     the instance's picks, never the component root's.
 29. **A record's binding map lists only what it changes** (F28). Merge
     `variableConsumptionMap`/`parameterConsumptionMap` per field; an empty map changes nothing.
+30. **A bound colour inside an instance is the component's** (F29). Read `colorVar` in the mode
+    in force — after resolving colour styles, and for the paints a run or region picks at draw
+    time as well.
 
 ---
 
