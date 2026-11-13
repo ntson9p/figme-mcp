@@ -5,14 +5,106 @@
  * Consumption sites carry a `VariableData` whose `value.alias` points at a variable either by
  * local GUID or by library `assetRef`. Local aliases are followed (with a cycle guard); library
  * aliases are surfaced as-is, since the library is not in the file.
+ *
+ * Which of a variable's values a layer shows depends on the MODE in force there (F28): a layer
+ * may pick a mode per collection (`variableModeBySetMap`), and otherwise inherits the pick of the
+ * nearest layer above it that made one, else the collection's default mode — its first.
+ * `withModes` and `variableValueIn` evaluate that.
  */
+import type { NodeChange } from '../fig/parse.js';
 import type { FileIndex } from './index.js';
 import type { TreeNode } from './tree.js';
 import type { KiwiObject } from '../fig/kiwi.js';
-import { assetRefString, bool, colorHex, compact, num, obj, objArr, r2, str, jsonSafe } from './access.js';
+import {
+  assetRefKey, assetRefString, bool, colorHex, compact, num, obj, objArr, r2, str, jsonSafe,
+} from './access.js';
 import { guidKey, type Guid } from './tree.js';
 
 const MAX_ALIAS_DEPTH = 8;
+
+/** The index lookups variable resolution needs. */
+export type VariableIndex = Pick<FileIndex, 'node' | 'resolveAssetRef'>;
+
+/** The variable modes in force at a layer: collection identity (`collectionKey`) → mode guid. */
+export type ModeMap = ReadonlyMap<string, string>;
+
+/** No mode picked anywhere: every collection is in its default mode. */
+export const NO_MODES: ModeMap = new Map();
+
+/**
+ * A mode this reader cannot evaluate: one picked in an extended collection, whose overrides of
+ * the base collection's values are not read. A value looked up under it is unknown, and the
+ * value cached beside the binding stands.
+ */
+const UNKNOWN_MODE = '';
+
+/**
+ * The identity of a variable collection, however a reference spells it (a `VariableSetID`:
+ * `guid` and/or `assetRef`). A collection is known by its publish key when it has one — the key
+ * is what other references use, and a file may hold more than one copy of a library collection —
+ * else by its guid.
+ */
+export function collectionKey(idx: VariableIndex, ref: KiwiObject | undefined): string | undefined {
+  if (!ref) return undefined;
+  const g = guidKey(obj(ref, 'guid') as Guid | undefined);
+  const local = (g ? idx.node(g) : undefined) ?? idx.resolveAssetRef(ref);
+  if (local) return str(local.node, 'key') ?? local.key;
+  return assetRefKey(ref) ?? g;
+}
+
+/** `base` with the modes `node` picks itself (`variableModeBySetMap`) taking precedence. */
+export function withModes(idx: VariableIndex, base: ModeMap, node: NodeChange): ModeMap {
+  let out: Map<string, string> | undefined;
+  for (const entry of objArr(obj(node, 'variableModeBySetMap'), 'entries')) {
+    const set = collectionKey(idx, obj(entry, 'variableSetID'));
+    const mode = guidKey(obj(entry, 'variableModeID') as Guid | undefined);
+    if (!set || !mode) continue;
+    (out ??= new Map(base)).set(set, obj(entry, 'variableSetExtensionID') ? UNKNOWN_MODE : mode);
+  }
+  return out ?? base;
+}
+
+/** A collection's default mode: the first of its modes, in their fractional-index order. */
+function defaultMode(set: TreeNode): string | undefined {
+  let first: KiwiObject | undefined;
+  for (const mode of objArr(set.node, 'variableSetModes')) {
+    const at = str(mode, 'sortPosition');
+    const best = str(first, 'sortPosition');
+    // Raw code-unit comparison, as for sibling order (fig-reading-solution.md §11.4).
+    if (!first || (at !== undefined && best !== undefined && at < best)) first = mode;
+  }
+  return guidKey(obj(first, 'id') as Guid | undefined);
+}
+
+/**
+ * The value a variable takes under `modes` — the `VariableAnyValue` at the end of its alias
+ * chain, each variable read in the mode in force for its own collection — or undefined when that
+ * cannot be known here: a variable or collection not in the file, a mode it has no value for, an
+ * extended collection's mode, or a chain deeper than the guard.
+ */
+export function variableValueIn(
+  idx: VariableIndex,
+  alias: KiwiObject | undefined,
+  modes: ModeMap,
+  depth = 0,
+): KiwiObject | undefined {
+  if (!alias || depth > MAX_ALIAS_DEPTH) return undefined;
+  const g = guidKey(obj(alias, 'guid') as Guid | undefined);
+  const variable = (g ? idx.node(g) : undefined) ?? idx.resolveAssetRef(alias);
+  if (!variable || str(variable.node, 'type') !== 'VARIABLE') return undefined;
+  const set = variableSetOf(idx, variable);
+  const key = set ? (str(set.node, 'key') ?? set.key) : collectionKey(idx, obj(variable.node, 'variableSetID'));
+  const picked = key === undefined ? undefined : modes.get(key);
+  const mode = picked ?? (set ? defaultMode(set) : undefined);
+  const entries = objArr(obj(variable.node, 'variableDataValues'), 'entries');
+  let entry = mode === undefined ? undefined : entries.find((e) => guidKey(obj(e, 'modeID') as Guid | undefined) === mode);
+  // A collection that is not in the file has an unknown default; a single value needs none.
+  if (!entry && picked === undefined && !set && entries.length === 1) entry = entries[0];
+  if (!entry) return undefined;
+  const value = obj(obj(entry, 'variableData'), 'value');
+  const next = obj(value, 'alias');
+  return next ? variableValueIn(idx, next, modes, depth + 1) : value;
+}
 
 export interface VariableRef {
   /** Local variable name when resolvable, else undefined. */
@@ -57,7 +149,7 @@ function modeNames(idx: FileIndex, variable: TreeNode): Map<string, string> {
   return out;
 }
 
-export function variableSetOf(idx: FileIndex, variable: TreeNode): TreeNode | undefined {
+export function variableSetOf(idx: VariableIndex, variable: TreeNode): TreeNode | undefined {
   const ref = obj(variable.node, 'variableSetID');
   if (!ref) return undefined;
   const byGuid = guidKey(obj(ref, 'guid') as Guid | undefined);

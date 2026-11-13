@@ -16,14 +16,16 @@ import { overrideIdentity, type TreeNode } from '../model/tree.js';
 import { bool, bytes, num, obj, objArr, str } from '../model/access.js';
 import { BoundsCache, effectMargins } from './bounds.js';
 import {
-  applyProps,
   descend,
   instanceShapeNode,
   mergeNode,
   resolveInstance,
+  showLayer,
   type OverrideRecords,
   type PropAssignments,
 } from './instance.js';
+import { applyBindings, applyColours, boundPaints, type BoundNode } from '../model/bindings.js';
+import { NO_MODES, withModes, type ModeMap } from '../model/variables.js';
 import { applyStyles, runPaints } from './style.js';
 import { expandBox, fromFigma, isIdentity, transformBox, unionBox, type Box } from './matrix.js';
 import {
@@ -111,6 +113,10 @@ export interface ExportContext {
   readonly scope: string;
   /** Symbols already being expanded around the root, for the recursion guard. */
   readonly active: Iterable<string>;
+  /** The component that instance expands, whose root the instance stands in for. */
+  readonly symbol: TreeNode;
+  /** The variable modes in force at that instance (F28). */
+  readonly modes: ModeMap;
 }
 
 export interface ExportOptions {
@@ -152,6 +158,14 @@ class Exporter {
   private readonly activeSymbols = new Set<string>();
   /** Distinguishes ids for the same symbol node drawn under different instances. */
   private defScope = '';
+  /** The component the innermost enclosing INSTANCE expands. */
+  private levelSymbol: TreeNode | undefined;
+  /** Variable modes in force at the innermost enclosing INSTANCE (F28). */
+  private levelModes: ModeMap = NO_MODES;
+  /** Modes in force at a layer, per instance scope and layer (F28). */
+  private readonly modeMemo = new Map<string, ModeMap>();
+  /** Layers already reported for a binding they could not resolve, per scope. */
+  private readonly unresolvedBindings = new Set<string>();
 
   constructor(entry: CacheEntry, root: TreeNode, opts: ExportOptions) {
     this.entry = entry;
@@ -172,6 +186,8 @@ class Exporter {
       this.frame = opts.context.records;
       this.props = opts.context.props;
       this.defScope = opts.context.scope;
+      this.levelSymbol = opts.context.symbol;
+      this.levelModes = opts.context.modes;
       for (const symbol of opts.context.active) this.activeSymbols.add(symbol);
     }
   }
@@ -200,22 +216,82 @@ class Exporter {
 
   /**
    * The node as this instance sees it: the tree node merged with the active overrides and with
-   * the enclosing instance's property assignments applied (F17, F18), then with every colour or
-   * effect style it references resolved to that style's live value (F19).
+   * the enclosing instance's property assignments applied (F17, F18) — a nested instance whose
+   * component that swaps losing the old component's appearance (F27) — then with every colour or
+   * effect style it references resolved to that style's live value (F19), and, inside an
+   * instance, its visibility and colours bound to variables read in the modes in force (F28,
+   * F29).
    */
   private effective(t: TreeNode): NodeChange {
     let node = t.node;
+    let staleOutlines = false;
     if (this.frame) {
-      const record = this.frame.get(overrideIdentity(t));
-      node = mergeNode(node, record);
-      const applied = applyProps(node, this.props, record?.['derivedTextData'] !== undefined);
-      if (applied.node !== node) {
-        this.report.seen('instance-property');
-        node = applied.node;
-        if (applied.staleOutlines) this.staleOutlines.add(node);
+      const shown = showLayer(this.entry.index, t, this.frame, this.props);
+      if (shown.propsApplied) this.report.seen('instance-property');
+      node = shown.node;
+      staleOutlines = shown.staleOutlines;
+    }
+    let live = applyStyles(this.entry.index, node);
+    // A stored layer's values were resolved where it stands; a component's layer drawn inside an
+    // instance carries the component's, so its bindings are read again here.
+    if (this.frame) live = this.bindVariables(t, live);
+    // Marked on the node `emitText` is handed: each step above may return a new record.
+    if (staleOutlines) this.staleOutlines.add(live);
+    return live;
+  }
+
+  /** F28, F29 — the layer's visibility and colours, read in the variable modes in force at it. */
+  private bindVariables(t: TreeNode, node: NodeChange): NodeChange {
+    const modes = this.modesAt(t, node);
+    const bound = applyBindings(this.entry.index, node, modes);
+    this.noteBindings(t, bound, modes);
+    return bound.node;
+  }
+
+  private noteBindings(t: TreeNode, bound: BoundNode, modes: ModeMap): void {
+    if (bound.applied > 0) this.report.seen('variable-binding');
+    // Only a mode picked somewhere can make the cached value the wrong one.
+    if (bound.unresolved > 0 && modes.size > 0) {
+      const key = `${this.defScope}${t.key}`;
+      if (!this.unresolvedBindings.has(key)) {
+        this.unresolvedBindings.add(key);
+        this.report.approximated('variable-unresolved', t.key);
       }
     }
-    return applyStyles(this.entry.index, node);
+  }
+
+  /**
+   * Inside an instance, the paints a text run or vector region picks at draw time — a style an
+   * entry names — read in the modes in force at the layer (F29); outside one, as stored.
+   */
+  private runBinder(t: TreeNode, node: NodeChange): ((paints: KiwiObject[]) => KiwiObject[]) | undefined {
+    if (!this.frame) return undefined;
+    const modes = this.modesAt(t, node);
+    return (paints) => boundPaints(this.entry.index, paints, modes);
+  }
+
+  /** The variable modes in force at `t`, shown as `node`: its own picks over those above it. */
+  private modesAt(t: TreeNode, node: NodeChange): ModeMap {
+    return withModes(this.entry.index, this.modesAbove(t), node);
+  }
+
+  /**
+   * The modes in force at `t`'s parent. Inside an instance that is the instance's own modes
+   * with the picks of the component's layers between its root and `t`, each as this instance
+   * shows it; the component root's own picks do not count, since the instance stands in for
+   * the root. Outside an instance it is the picks of the stored layers above `t`.
+   */
+  private modesAbove(t: TreeNode): ModeMap {
+    const parent = t.parent;
+    if (!parent || parent === this.levelSymbol) return this.frame ? this.levelModes : NO_MODES;
+    const key = `${this.defScope}${parent.key}`;
+    let modes = this.modeMemo.get(key);
+    if (!modes) {
+      const shown = this.frame ? mergeNode(parent.node, this.frame.get(overrideIdentity(parent))) : parent.node;
+      modes = withModes(this.entry.index, this.modesAbove(parent), shown);
+      this.modeMemo.set(key, modes);
+    }
+    return modes;
   }
 
   /** Def keys must not collide between two instances of the same symbol with different fills. */
@@ -448,26 +524,38 @@ class Exporter {
       return;
     }
 
+    // The modes in force at the instance, read in its own context before entering it (F28).
+    const modes = this.modesAt(t, node);
+    const nested = this.frame !== undefined;
     const savedFrame = this.frame;
     const savedProps = this.props;
     const savedScope = this.defScope;
+    const savedSymbol = this.levelSymbol;
+    const savedModes = this.levelModes;
     this.frame = resolved.records;
     this.props = resolved.props;
     this.defScope = `${this.defScope}${t.key}~`;
+    this.levelSymbol = resolved.symbol;
+    this.levelModes = modes;
     this.activeSymbols.add(resolved.symbol.key);
     try {
       // The instance's own box: the symbol root with its override applied, overlaid by whatever
       // the instance itself (as seen in its context) already carries resolved.
-      const shape = applyStyles(
+      let shape = applyStyles(
         this.entry.index,
         instanceShapeNode(node, resolved.symbol, resolved.records),
       );
+      // A nested instance's own colours were read in its context by `effective`, but a style
+      // resolved again just above hands back the style's paints as stored (F29).
+      if (nested) shape = applyColours(this.entry.index, shape, modes).node;
       this.emitOwnContent(t, shape, 'container', resolved.symbol.children);
     } finally {
       this.activeSymbols.delete(resolved.symbol.key);
       this.frame = savedFrame;
       this.props = savedProps;
       this.defScope = savedScope;
+      this.levelSymbol = savedSymbol;
+      this.levelModes = savedModes;
     }
   }
 
@@ -485,6 +573,7 @@ class Exporter {
     }
     const box = Exporter.box(node);
     const paintField = field === 'fillGeometry' ? 'fillPaints' : 'strokePaints';
+    const bind = this.runBinder(t, node);
 
     for (const path of geometry) {
       const raw = this.blob(num(path, 'commandsBlob'));
@@ -500,7 +589,7 @@ class Exporter {
       }
       // SVG's default fill-rule is nonzero, so it is only written when the winding is ODD.
       const rule = str(path, 'windingRule') === 'ODD' ? 'evenodd' : undefined;
-      const styled = runPaints(this.entry.index, node, num(path, 'styleID'), paintField);
+      const styled = runPaints(this.entry.index, node, num(path, 'styleID'), paintField, bind);
       for (const paint of styled ?? paints) {
         const attrs = paintAttrs(paint, box, this.env, t.key);
         if (!attrs) continue;
@@ -669,8 +758,9 @@ class Exporter {
 
     const box = Exporter.box(node);
     const own = objArr(node, 'fillPaints');
+    const bind = this.runBinder(t, node);
     const paintsFor = (styleID: number): readonly KiwiObject[] =>
-      runPaints(this.entry.index, node, styleID, 'fillPaints') ?? own;
+      runPaints(this.entry.index, node, styleID, 'fillPaints', bind) ?? own;
 
     for (const run of draw.glyphs) {
       for (const paint of paintsFor(run.styleID)) {

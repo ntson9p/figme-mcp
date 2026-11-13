@@ -372,6 +372,7 @@ partial, so assignments must be merged per `defID`. A text assignment normally c
 derived record holding the new glyphs (11 907 of 12 584 direct bindings; the rest are nested
 and served by the enclosing instance). A swap names the symbol by `guidValue`, or in a record by
 `overriddenSymbolID` (1 677 records); 2 027 of the 2 029 swap targets are local symbols.
+(Amended 2026-11-09: `value` is not the only slot an assignment keeps its value in — see §10.1.)
 
 ### 8.7 A style reference is live; the paints cached beside it are not
 
@@ -458,3 +459,93 @@ carry one carry this value. No record path segment ever equals it; 31 segments a
 layers by their guid. It therefore means "no key", and the layer's identity is its guid — read
 literally, all such layers of a component would share one identity and none of their records
 would apply.
+
+## 10. Addendum — component properties and variables in current files (2026-11-09)
+
+Format details that files saved by a current Figma rely on and that the sections above do not
+cover. Unlike §§7–9 they come without file-wide counts; each is pinned by a synthetic unit test.
+
+### 10.1 A property value may be kept only as variable data
+
+The schema gives `ComponentPropAssignment` two value slots: `value`, a `ComponentPropValue`, and
+`varValue`, a `VariableData` whose `value` is a `VariableAnyValue`. Older files fill both with
+the same value. Current ones write some assignments — every kind of property, INSTANCE_SWAP most
+visibly — with `varValue` alone, and the value names differ between the two shapes:
+
+| property | `value` (`ComponentPropValue`) | `varValue.value` (`VariableAnyValue`) |
+|---|---|---|
+| BOOL | `boolValue` | `boolValue` |
+| TEXT | `textValue` (a `TextData`) | `textDataValue` (a `TextData`; its `textValue` is a plain string) |
+| INSTANCE_SWAP | `guidValue` | `symbolIdValue { guid \| assetRef }` |
+
+`varValue` may instead hold a `propRefValue` (a property of the enclosing instance, §8.6) or an
+`alias` to a variable, and then carries no value of its own. A reader that looks only at `value`
+takes such an assignment for no assignment at all, and the component's default shows through:
+the default icon instead of the chosen one, the default text, a layer the property switches off
+left on. Figma applies them — the `derivedSymbolData` of such an instance addresses the layers
+of the swapped-in component, not those of the default one. A property definition can keep its
+default the same way: an INSTANCE_SWAP definition has no `initialValue`, only `varValue`. A
+`symbolIdValue` with an `assetRef` instead of a `guid` is matched against the publish key of a
+local component (`componentKey`, else `key`); one from a library that is not in the file stays
+unresolved.
+
+### 10.2 A swapped nested instance keeps only what it overrides
+
+The record of an instance nested in a component is complete for the component it points at
+(§8.5): besides its overrides it repeats that component root's own appearance — paints, stroke,
+corners, effects, opacity, clipping. When a record (`overriddenSymbolID`) or an INSTANCE_SWAP
+property swaps the component, those repeated values belong to the OLD component, and Figma
+draws the new component's root, keeping only what the instance overrides. An icon whose root
+is a filled circle, swapped for one whose root paints nothing, keeps no circle:
+Figma derives no `fillGeometry` for the swapped instance even where the enclosing instance
+resizes it, as it would for a node that paints (§8.8). The stored outline (`fillGeometry`,
+`strokeGeometry`) traces the old component's shape too. So each unit of the instance's own
+appearance — paints with their style reference, the stroke-weight group and the corner group
+taken whole — is compared with the old root, an equal one takes the new root's value, and the
+outline is dropped, to be supplied by the records or rebuilt from size and radii.
+
+### 10.3 The variable mode decides what a bound field shows, and inside an instance nothing stores it
+
+A layer binds a field to a variable in `variableConsumptionMap` and in the newer
+`parameterConsumptionMap` (which also carries component-property bindings, as `propRefValue`):
+`entries[] { variableField, variableData: { value: { alias } } }`. A paint binds its colour the
+same way, in `colorVar`. Which of the variable's values shows depends on the mode in force:
+`variableModeBySetMap.entries[] { variableSetID, variableModeID }` picks a mode per collection on
+any layer — page, frame, instance — for itself and every layer below it, the nearest pick
+winning. Without one, the collection's default mode applies: the first of its `variableSetModes`
+in `sortPosition` order (a fractional index, compared by code unit). `variableSetID`, like a
+variable's own (§7.4), names the collection by `guid` or by `assetRef` key, so the two spellings
+are matched through the collection node's `key`. An instance stands in for its component's root,
+so the root's own picks do not reach the instance's layers; the instance's record has its own.
+
+Figma writes the bound value beside each binding — the layer's `visible`, the paint's `color` —
+resolved where the layer is defined: a stored layer's in its own place (an instance's own fill
+comes out in the mode the instance picks), a component layer's in the component's modes. An
+instance that picks another mode shows other values, and the file holds them nowhere: derived
+records carry geometry, sizes, transforms and text layout, never `visible` or paints. A component
+stored in "light" and placed in a frame that picks "dark" shows the dark values; a layer that a
+boolean variable hides in a "compact" mode is hidden in every compact instance although the
+component stores it visible — Figma's own layout of such an instance places the other layers as
+if it were absent. A mode picked on an extended collection (`variableSetExtensionID`) takes values
+from the extension's overrides, which this reader does not interpret.
+
+### 10.4 A record's binding map lists only the bindings it changes
+
+`variableConsumptionMap` and `parameterConsumptionMap` in an override record list only the
+bindings that record changes. Restyling a text inside an instance writes an EMPTY
+`variableConsumptionMap` beside the text style, and the layer stays bound — the instance's layout
+still follows the binding — so a reader that replaces the map unbinds every restyled layer. An
+entry that names a field but carries no `variableData` removes that field's binding, and the
+layer's own value applies again. The maps therefore merge per `variableField`, as property
+assignments merge per `defID` (§8.6).
+
+### 10.5 A colour bound to a variable is stored in the component's mode too
+
+A SOLID paint, a gradient stop and an effect bind their colour to a variable in `colorVar` (a
+`VariableData` whose value is an `alias`), and the `color` beside it is the variable's value
+where the layer is defined (§10.3): for a component's layer, in the component's modes, whatever
+mode an instance of it picks. A colour style's own paint can be bound the same way, so a layer
+that references the style shows the style's variable in the layer's mode; text runs and vector
+regions name their paints, or a style, in `styleOverrideTable` entries that bind alike. The
+variable's colour carries its own alpha. A paint's `opacity` is a separate field, with a binding
+of its own (`opacityVar`), and not part of the colour.

@@ -107,8 +107,8 @@ components / variables / images the file holds.
 `root` (default DOCUMENT), `depth` (default 2, max 6), `types` filter, `format`, `instances`,
 `cursor`. Returns a **flat list in document order**; each entry has `depth` (relative to the
 root) and `parent`, so the hierarchy is reconstructable, plus `children` (a count) so you can
-see where it is worth going deeper. A hidden layer — hidden directly or by a component property
-— is marked `hidden`.
+see where it is worth going deeper. A hidden layer — hidden directly, by a component property,
+or, inside an instance, by a variable read in the mode the instance picks — is marked `hidden`.
 
 Component instances are walked into: their layers come back as the instance shows them, with
 the ids described under [Layers inside component instances](#layers-inside-component-instances).
@@ -223,6 +223,11 @@ value, the one Figma draws and lays the text out with — not the copy cached on
 the reference, which can be stale. `fig_node`, `fig_text` and `fig_instance` report the same live
 values, and name the style whether it was published (`assetRef`) or not (`guid`).
 
+Inside a component instance, a colour bound to a variable (`colorVar`) is likewise reported in
+the variable mode in force there — the one Figma draws: a layer of an instance that picks "dark"
+reports the dark value, although its component stores its own. `colorVar.values` still lists the
+value of every mode.
+
 A frame with Figma's "Auto" spacing comes back as `justifyContent: "space-between"` with no
 `gap`: Figma ignores the stored gap there, and as a CSS `gap` it would become a minimum that
 overflows a narrower box. `rowGap` appears only on a layout that wraps.
@@ -259,6 +264,9 @@ most-used first, so the load-bearing parts of the design system come back first.
                   { "name": "icon", "type": "INSTANCE_SWAP" } ] } ] }
 ```
 
+An INSTANCE_SWAP default comes back as the component it names, `{ "guid": …, "name": … }` —
+also when the file keeps it only as variable data, as current files do.
+
 ### 8. `fig_instance` — how an instance differs from its component
 
 ```jsonc
@@ -273,6 +281,8 @@ most-used first, so the load-bearing parts of the design system come back first.
 
 An instance that sets component properties reports them with the names resolved, e.g.
 `propAssignments: [ { "defID": "108:1543", "name": "text", "type": "TEXT", "value": "Back" } ]`.
+A swap comes back as the component it picks, `{ "guid": …, "name": … }`, whichever of the two
+slots (`value` or `varValue`) the file stored it in.
 A path segment is the target's `overrideKey` when it has one and its guid otherwise, and a
 nested path is walked through swapped instances exactly as the renderer expands them.
 

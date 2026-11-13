@@ -24,12 +24,14 @@ export { applyStyles, styleEffects, stylePaints } from '../model/styles.js';
  * `styleOverrideTable`, which carries only the fields that differ from the node's own. An entry
  * may name a colour style instead of carrying paints, so the style is followed first. Returns
  * undefined when nothing overrides the field, and the caller falls back to the node's paints.
+ * `bind`, when given, reads the colours the chosen paints bind to variables (F29).
  */
 export function runPaints(
   index: FileIndex,
   node: NodeChange,
   styleID: number | undefined,
   field: 'fillPaints' | 'strokePaints',
+  bind: (paints: KiwiObject[]) => KiwiObject[] = (paints) => paints,
 ): KiwiObject[] | undefined {
   if (!styleID) return undefined;
   const styleField = field === 'fillPaints' ? 'styleIdForFill' : 'styleIdForStrokeFill';
@@ -41,8 +43,8 @@ export function runPaints(
     for (const override of table) {
       if (num(override, 'styleID') !== styleID) continue;
       const styled = stylePaints(index, override[styleField]);
-      if (styled) return styled;
-      if (Array.isArray(override[field])) return objArr(override, field);
+      if (styled) return bind(styled);
+      if (Array.isArray(override[field])) return bind(objArr(override, field));
     }
   }
   return undefined;

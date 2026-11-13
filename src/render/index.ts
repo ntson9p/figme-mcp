@@ -74,6 +74,8 @@ function resolveRoot(entry: CacheEntry, guid: string): RenderRoot {
         props: level.instance.props,
         scope: `${[level.root, ...level.path].join('~')}~`,
         active: level.active,
+        symbol: level.instance.symbol,
+        modes: level.modes,
       },
     };
   }

@@ -62,6 +62,8 @@ export const FEATURES = [
   'instance-recursive',
   'instance-property',
   'instance-swap',
+  'variable-binding',
+  'variable-unresolved',
   'node-failed',
 ] as const;
 

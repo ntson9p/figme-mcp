@@ -21,21 +21,28 @@
  * an instance gives the component's properties. A symbol descendant bound to a property through
  * `componentPropRefs` takes its `visible`, its text or its symbol from the assignment. Not one of
  * the sample's 29 877 BOOLEAN=false assignments is mirrored by a `visible:false` record, so the
- * assignments have to be evaluated, not read back.
+ * assignments have to be evaluated, not read back. An assignment keeps its value in `value` or,
+ * in files from current Figma, only in `varValue` (F26) — `assignmentValue` reads both.
  */
 import type { KiwiObject } from '../fig/kiwi.js';
 import type { NodeChange } from '../fig/parse.js';
 import type { FileIndex } from './index.js';
 import { guidKey, overrideIdentity, type Guid, type TreeNode } from './tree.js';
-import { bool, num, obj, objArr, str } from './access.js';
+import { assetRefKey, bool, num, obj, objArr, str } from './access.js';
 
 /** Addressing fields that must never be merged into a node as content. */
 const OVERRIDE_META = new Set(['guidPath', 'overrideLevel', 'guid', 'phase', 'parentIndex']);
 
 /** Record map for one instance level: identity path (joined by '/') → partial NodeChange. */
 export type OverrideRecords = ReadonlyMap<string, KiwiObject>;
-/** Component-property assignments of one instance: defID → `{textValue|boolValue|guidValue}`. */
+/**
+ * Component-property assignments of one instance: defID → the value in `ComponentPropValue`
+ * shape, `{textValue|boolValue|guidValue}`, whichever slot the file stored it in.
+ */
 export type PropAssignments = ReadonlyMap<string, KiwiObject>;
+
+/** The index lookups the instance resolver needs. */
+type ResolverIndex = Pick<FileIndex, 'node' | 'componentByKey'>;
 
 export interface ResolvedInstance {
   readonly symbol: TreeNode;
@@ -52,6 +59,57 @@ function pathOf(record: KiwiObject): string | undefined {
 
 function defIdOf(assignment: KiwiObject): string | undefined {
   return guidKey(obj(assignment, 'defID') as Guid | undefined);
+}
+
+/**
+ * A component property's value held as `VariableData` — the `varValue` of an assignment or of a
+ * property definition — in the `ComponentPropValue` shape the rest of the resolver reads, or
+ * undefined when it holds nothing this file can turn into one (F26).
+ *
+ * The names differ between the two shapes: a swap is `symbolIdValue { guid | assetRef }`, not
+ * `guidValue`, and text is `textDataValue`, because a `VariableAnyValue`'s `textValue` is a plain
+ * string. A `propRefValue` (a property of the enclosing instance) or an `alias` (a variable)
+ * carries no value of its own and is left to the caller.
+ */
+export function propValueOfVariableData(
+  index: Pick<FileIndex, 'componentByKey'>,
+  data: KiwiObject | undefined,
+): KiwiObject | undefined {
+  const value = obj(data, 'value');
+  if (!value) return undefined;
+  const flag = bool(value, 'boolValue');
+  if (flag !== undefined) return { boolValue: flag };
+  const text = obj(value, 'textDataValue');
+  if (text) return { textValue: text };
+  const symbol = obj(value, 'symbolIdValue');
+  if (symbol) {
+    const byGuid = obj(symbol, 'guid');
+    if (guidKey(byGuid as Guid | undefined)) return { guidValue: byGuid };
+    const key = assetRefKey(symbol);
+    const local = key ? index.componentByKey(key) : undefined;
+    const guid = local ? obj(local.node, 'guid') : undefined;
+    if (guid) return { guidValue: guid };
+  }
+  return undefined;
+}
+
+/**
+ * The value one assignment gives its property, in `ComponentPropValue` shape: the `value` slot
+ * when the file wrote it, else what `varValue` holds — a value of its own (F26), or a PROP_REF to
+ * a property of the enclosing instance, looked up in `outerProps`. Undefined when the assignment
+ * carries nothing usable, and the component's own default then stands.
+ */
+export function assignmentValue(
+  index: ResolverIndex,
+  assignment: KiwiObject,
+  outerProps?: PropAssignments,
+): KiwiObject | undefined {
+  const value = obj(assignment, 'value');
+  if (value && Object.keys(value).length > 0) return value;
+  const varValue = obj(assignment, 'varValue');
+  const ref = guidKey(obj(obj(obj(varValue, 'value'), 'propRefValue'), 'defId') as Guid | undefined);
+  if (ref) return outerProps?.get(ref);
+  return propValueOfVariableData(index, varValue);
 }
 
 /**
@@ -80,8 +138,34 @@ function sizeDiffers(a: KiwiObject | undefined, b: KiwiObject | undefined): bool
   );
 }
 
+/** The maps that bind a node's fields to variables and properties (model/bindings.ts). */
+const BINDING_MAPS = new Set(['variableConsumptionMap', 'parameterConsumptionMap']);
+
 /**
- * `{ ...base, ...patch }` minus the addressing fields.
+ * F28 — binding maps merge per bound field. A record lists only the bindings it changes: one
+ * that restyles a text writes an EMPTY `variableConsumptionMap` beside its text style, and its
+ * layer stays bound — Figma's own layout of the instance still follows the binding — so replacing
+ * the map would unbind every field of every restyled layer. An entry that names a field but has
+ * no `variableData` unbinds that field.
+ */
+function mergeBindings(base: unknown, patch: unknown): KiwiObject {
+  const out = new Map<string, KiwiObject>();
+  for (const entry of objArr(base as KiwiObject | undefined, 'entries')) {
+    const field = str(entry, 'variableField');
+    if (field) out.set(field, entry);
+  }
+  for (const entry of objArr(patch as KiwiObject | undefined, 'entries')) {
+    const field = str(entry, 'variableField');
+    if (!field) continue;
+    if (obj(entry, 'variableData')) out.set(field, entry);
+    else out.delete(field);
+  }
+  return { ...(patch as KiwiObject), entries: [...out.values()] };
+}
+
+/**
+ * `{ ...base, ...patch }` minus the addressing fields, with property assignments merged per
+ * definition and binding maps per bound field.
  *
  * Figma re-derives geometry only for nodes that paint something (F20): of the sample's 22 097
  * resized painted nodes, 18 lack it. A record that resizes a node without supplying geometry
@@ -93,7 +177,10 @@ export function mergeNode(base: NodeChange, patch: KiwiObject | undefined): Node
   const out: NodeChange = { ...base };
   for (const [k, v] of Object.entries(patch)) {
     if (OVERRIDE_META.has(k)) continue;
-    out[k] = k === 'componentPropAssignments' ? mergeAssignments(base[k], v) : v;
+    out[k] =
+      k === 'componentPropAssignments' ? mergeAssignments(base[k], v)
+      : BINDING_MAPS.has(k) ? mergeBindings(base[k], v)
+      : v;
   }
   if (sizeDiffers(obj(base, 'size'), obj(patch, 'size'))) {
     if (patch['fillGeometry'] === undefined) delete out['fillGeometry'];
@@ -123,7 +210,7 @@ function collect(target: Map<string, KiwiObject>, records: readonly KiwiObject[]
  * none in the sample, so this path is untested against real data).
  */
 export function resolveInstance(
-  index: FileIndex,
+  index: ResolverIndex,
   node: NodeChange,
   inherited?: OverrideRecords,
   outerProps?: PropAssignments,
@@ -151,8 +238,7 @@ export function resolveInstance(
   for (const a of objArr(node, 'componentPropAssignments')) {
     const id = defIdOf(a);
     if (!id) continue;
-    const ref = obj(obj(obj(obj(a, 'varValue'), 'value'), 'propRefValue'), 'defId');
-    const value = obj(a, 'value') ?? (ref ? outerProps?.get(guidKey(ref as Guid) ?? '') : undefined);
+    const value = assignmentValue(index, a, outerProps);
     if (value) props.set(id, value);
   }
   return { symbol, records, props };
@@ -225,6 +311,116 @@ export function applyProps(
     }
   }
   return { node: out, staleOutlines };
+}
+
+/**
+ * The fields of an instance's own box that come from its component's root unless the instance
+ * overrides them, in the units Figma writes together: paints with their style reference, the
+ * stroke-weight group, the corner group (F27).
+ */
+const ROOT_APPEARANCE: readonly (readonly string[])[] = [
+  ['fillPaints', 'styleIdForFill'],
+  ['strokePaints', 'styleIdForStrokeFill'],
+  ['strokeWeight', 'borderStrokeWeightsIndependent', 'borderTopWeight', 'borderRightWeight',
+    'borderBottomWeight', 'borderLeftWeight'],
+  ['strokeAlign'],
+  ['strokeJoin'],
+  ['strokeCap'],
+  ['dashPattern'],
+  ['effects', 'styleIdForEffect'],
+  ['cornerRadius', 'rectangleCornerRadiiIndependent', 'rectangleTopLeftCornerRadius',
+    'rectangleTopRightCornerRadius', 'rectangleBottomRightCornerRadius', 'rectangleBottomLeftCornerRadius'],
+  ['cornerSmoothing'],
+  ['opacity'],
+  ['blendMode'],
+  ['frameMaskDisabled'],
+];
+
+/** Structural equality of two decoded values: primitives, bytes, arrays and records. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a instanceof Uint8Array || b instanceof Uint8Array) {
+    return a instanceof Uint8Array && b instanceof Uint8Array &&
+      a.length === b.length && a.every((v, i) => v === b[i]);
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) &&
+      a.length === b.length && a.every((v, i) => sameValue(v, b[i]));
+  }
+  if (a && b && typeof a === 'object' && typeof b === 'object') {
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    return ka.length === kb.length &&
+      ka.every((k) => Object.hasOwn(b, k) && sameValue((a as KiwiObject)[k], (b as KiwiObject)[k]));
+  }
+  return false;
+}
+
+/** The component an INSTANCE record shows: its swap target, else its own symbol. */
+function componentOf(node: NodeChange): string | undefined {
+  return (
+    guidKey(obj(node, 'overriddenSymbolID') as Guid | undefined) ??
+    guidKey(obj(obj(node, 'symbolData'), 'symbolID') as Guid | undefined)
+  );
+}
+
+/**
+ * F27 — the stored record of a nested instance whose component is swapped, as the swapped-in
+ * component shows it. The record is complete for the component it was written for, so it holds
+ * copies of that component root's own appearance — an icon's filled circle and round corners —
+ * that are not overrides. Swapped, the instance keeps only what it overrides: every unit of
+ * `ROOT_APPEARANCE` equal to the old root's takes the new root's value (or none, where the new
+ * root has none), and the outline, which traced the old component's shape, is dropped.
+ */
+export function swapAppearance(stored: NodeChange, from: NodeChange, to: NodeChange): NodeChange {
+  const out: NodeChange = { ...stored };
+  delete out['fillGeometry'];
+  delete out['strokeGeometry'];
+  for (const unit of ROOT_APPEARANCE) {
+    if (!unit.every((field) => sameValue(stored[field], from[field]))) continue;
+    for (const field of unit) {
+      if (to[field] === undefined) delete out[field];
+      else out[field] = to[field];
+    }
+  }
+  return out;
+}
+
+export interface ShownLayer extends AppliedProps {
+  /** True when a property value changed the layer. */
+  readonly propsApplied: boolean;
+}
+
+/**
+ * A component layer as the instance that expands it shows it: the stored node merged with its
+ * record, with the instance's property values applied (F17, F18) — and, for a nested instance
+ * whose component that swaps, with the copies of the old component's root appearance taken out
+ * before the record goes on top (F27). Shared by the exporter and the scene, so the picture and
+ * the inspection tools see the same layer.
+ */
+export function showLayer(
+  index: Pick<FileIndex, 'node'>,
+  t: TreeNode,
+  records: OverrideRecords,
+  props: PropAssignments,
+): ShownLayer {
+  const record = records.get(overrideIdentity(t));
+  const outlines = record?.['derivedTextData'] !== undefined;
+  const merged = mergeNode(t.node, record);
+  const applied = applyProps(merged, props, outlines);
+  if (str(t.node, 'type') === 'INSTANCE') {
+    const from = componentOf(t.node);
+    const to = componentOf(applied.node);
+    const old = from && to && from !== to ? index.node(from) : undefined;
+    const swapped = old && to ? index.node(to) : undefined;
+    if (old && swapped) {
+      // A component missing from the file (a library one) cannot be compared; nothing changes.
+      const cleaned = mergeNode(swapAppearance(t.node, old.node, swapped.node), record);
+      const reapplied = applyProps(cleaned, props, outlines);
+      return { ...reapplied, propsApplied: reapplied.node !== cleaned };
+    }
+  }
+  return { ...applied, propsApplied: applied.node !== merged };
 }
 
 /**

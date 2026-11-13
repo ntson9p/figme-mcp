@@ -16,7 +16,25 @@ import {
   assetRefString, bool, bytes, colorHex, compact, hex, jsonSafe, num, obj, objArr, r2, str,
 } from './access.js';
 import { describeVariableData } from './variables.js';
-import { applyStyles, DETACHED_STYLE_GUID, resolveStyle } from './styles.js';
+import { applyStyles, DETACHED_STYLE_GUID, resolveStyle, type ApplyStylesOptions } from './styles.js';
+import { applyColours, bindingModesOf } from './bindings.js';
+
+/**
+ * `node` — the layer `t`, or one of its partial run entries — with paints, effects and typography
+ * as Figma shows them: a referenced style wins over the copy cached beside it (F19, F22), and for
+ * a layer inside an instance a colour bound to a variable is read in the modes in force there
+ * (F29), exactly as the renderer reads it.
+ */
+export function shownStyle(
+  idx: FileIndex,
+  t: TreeNode,
+  node: NodeChange = t.node,
+  opts: ApplyStylesOptions = { text: true },
+): NodeChange {
+  const styled = applyStyles(idx, node, opts);
+  const modes = bindingModesOf(t);
+  return modes ? applyColours(idx, styled, modes).node : styled;
+}
 
 export interface NodeSummary {
   guid: string;
@@ -646,8 +664,8 @@ export function nodeDetail(
   opts: NodeDetailOptions = {},
 ): Record<string, unknown> {
   const node = t.node;
-  // Paints, effects and typography as Figma shows them: a referenced style wins (F19, F22).
-  const live = applyStyles(idx, node, { text: true });
+  // Paints, effects and typography as Figma shows them (F19, F22, F29).
+  const live = shownStyle(idx, t);
   const maxChildren = opts.maxChildren ?? 100;
   const box = paintBox(node);
   const fills = objArr(live, 'fillPaints').map((p) => paintView(idx, p, box));
@@ -831,8 +849,8 @@ export function styleBlock(idx: FileIndex, t: TreeNode): Record<string, unknown>
     }),
   );
 
-  // Paints, effects and typography as Figma shows them: a referenced style wins (F19, F22).
-  const live = applyStyles(idx, node, { text: true });
+  // Paints, effects and typography as Figma shows them (F19, F22, F29).
+  const live = shownStyle(idx, t);
   const box = paintBox(node);
   const fills = objArr(live, 'fillPaints').map((p) => paintView(idx, p, box));
   const strokes = objArr(live, 'strokePaints').map((p) => paintView(idx, p, box));

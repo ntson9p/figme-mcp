@@ -81,7 +81,8 @@ src/
     text.ts         characters + styled-run resolution
     instance.ts     what an instance looks like: identity paths, records, property assignments
     components.ts   symbols, instances, the fig_instance view
-    variables.ts    collections, modes, alias chains
+    variables.ts    collections, modes, alias chains, values in the mode in force
+    bindings.ts     fields bound to variables, read in the mode in force
   render/         LAYER 2½ — fig_render: node subtree → SVG → (optional) PNG
     export.ts       the traversal; instance.ts / style.ts / bounds.ts / text.ts / paint.ts /
                     effects.ts each own one concern; report.ts the frozen feature vocabulary
